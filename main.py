@@ -6,6 +6,9 @@ from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
 TOKEN = os.getenv("TOKEN")
 
+ADMIN_ID = 1228141945
+GROUP_CHAT_ID = None   # <<< PUT YOUR GROUP ID HERE
+
 MEMBERS_FILE = "members.json"
 TOKENS_QUEUE_FILE = "tokens_queue.json"
 PAWS_QUEUE_FILE = "paws_queue.json"
@@ -32,7 +35,10 @@ def save_json(file, data):
     with open(file, "w") as f:
         json.dump(data, f, indent=2)
 
-# ---------- Load Members ----------
+def is_admin(update: Update):
+    return update.effective_user.id == ADMIN_ID
+
+# ---------- Members ----------
 
 def load_members():
     return load_json(MEMBERS_FILE, [])
@@ -60,29 +66,26 @@ def active_member_ids():
 
     now = now_ist()
 
-    # remove expired hold
     for mid in list(hold.keys()):
         if now >= datetime.fromisoformat(hold[mid]):
             del hold[mid]
     save_json(HOLD_FILE, hold)
 
-    # remove expired cooldown
     for mid in list(cooldown.keys()):
         if now >= datetime.fromisoformat(cooldown[mid]):
             del cooldown[mid]
     save_json(COOLDOWN_FILE, cooldown)
 
     blocked = set(int(x) for x in hold.keys()) | set(int(x) for x in cooldown.keys())
-
     return [i for i in ids if i not in blocked]
 
-# ---------- Weekly Selection ----------
+# ---------- Weekly Logic ----------
 
-def week_number():
+def week_number(offset=0):
     ref = datetime(2026, 1, 5)
-    return ((now_ist() - ref).days) // 7
+    return ((now_ist() - ref).days // 7) + offset
 
-def generate_week():
+def generate_week(offset=0):
     initialize_queues()
 
     members = load_members()
@@ -93,24 +96,18 @@ def generate_week():
     tokens_queue = load_json(TOKENS_QUEUE_FILE, [])
     paws_queue = load_json(PAWS_QUEUE_FILE, [])
 
-    # Filter queues by active members
     tokens_queue = [i for i in tokens_queue if i in active_ids]
     paws_queue = [i for i in paws_queue if i in active_ids]
 
-    w = week_number()
+    w = week_number(offset)
 
     start_t = (w * GROUP_SIZE) % len(tokens_queue)
-    tokens_ids = []
-    for i in range(GROUP_SIZE):
-        tokens_ids.append(tokens_queue[(start_t + i) % len(tokens_queue)])
+    tokens_ids = [tokens_queue[(start_t + i) % len(tokens_queue)] for i in range(GROUP_SIZE)]
 
-    # Paws: pick 7 that are not in tokens
     paws_candidates = [i for i in paws_queue if i not in tokens_ids]
 
     start_p = (w * GROUP_SIZE) % len(paws_candidates)
-    paws_ids = []
-    for i in range(GROUP_SIZE):
-        paws_ids.append(paws_candidates[(start_p + i) % len(paws_candidates)])
+    paws_ids = [paws_candidates[(start_p + i) % len(paws_candidates)] for i in range(GROUP_SIZE)]
 
     text = f"Week {w+1}\n\n"
 
@@ -129,51 +126,46 @@ def generate_week():
 async def week(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(generate_week())
 
-# Permanent swap inside Tokens queue
+async def nextweek(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(generate_week(offset=1))
+
 async def swap_tokens(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if len(context.args) != 2:
+    if not is_admin(update):
         return
 
     a, b = int(context.args[0]), int(context.args[1])
     q = load_json(TOKENS_QUEUE_FILE, [])
-
     if a in q and b in q:
         ia, ib = q.index(a), q.index(b)
         q[ia], q[ib] = q[ib], q[ia]
         save_json(TOKENS_QUEUE_FILE, q)
         await update.message.reply_text("Tokens queue updated")
 
-# Permanent swap inside Paws queue
 async def swap_paws(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if len(context.args) != 2:
+    if not is_admin(update):
         return
 
     a, b = int(context.args[0]), int(context.args[1])
     q = load_json(PAWS_QUEUE_FILE, [])
-
     if a in q and b in q:
         ia, ib = q.index(a), q.index(b)
         q[ia], q[ib] = q[ib], q[ia]
         save_json(PAWS_QUEUE_FILE, q)
         await update.message.reply_text("Paws queue updated")
 
-# Hold (30 days → next Monday handled automatically)
 async def hold(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args:
+    if not is_admin(update):
         return
 
     mid = context.args[0]
     hold = load_json(HOLD_FILE, {})
-
-    return_time = now_ist() + timedelta(days=30)
-    hold[mid] = return_time.isoformat()
+    hold[mid] = (now_ist() + timedelta(days=30)).isoformat()
     save_json(HOLD_FILE, hold)
 
     await update.message.reply_text(f"{mid} on hold for 30 days")
 
-# Cooldown (1 day)
 async def cooldown(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args:
+    if not is_admin(update):
         return
 
     mid = context.args[0]
@@ -183,16 +175,32 @@ async def cooldown(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(f"{mid} on cooldown for 1 day")
 
+# ---------- Scheduler ----------
+
+async def monday_post(context: ContextTypes.DEFAULT_TYPE):
+    if GROUP_CHAT_ID:
+        text = generate_week()
+        await context.bot.send_message(chat_id=GROUP_CHAT_ID, text=text)
+
 # ---------- Main ----------
 
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("week", week))
+    app.add_handler(CommandHandler("nextweek", nextweek))
     app.add_handler(CommandHandler("swap_tokens", swap_tokens))
     app.add_handler(CommandHandler("swap_paws", swap_paws))
     app.add_handler(CommandHandler("hold", hold))
     app.add_handler(CommandHandler("cooldown", cooldown))
+
+    job_queue = app.job_queue
+    if GROUP_CHAT_ID:
+        job_queue.run_daily(
+            monday_post,
+            time=time(hour=12, minute=0),  # 5:30 PM IST
+            days=(0,)
+        )
 
     app.run_polling()
 
