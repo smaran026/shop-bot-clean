@@ -8,13 +8,16 @@ TOKEN = os.getenv("TOKEN")
 
 week_counter = 0
 HOLD_FILE = "hold.json"
-CHAT_ID = None   # Optional: set your group ID later for auto notifications
+PENDING_FILE = "pending_return.json"
+MEMBER_FILE = "members.txt"
+
+CHAT_ID = None  # Put group ID later for auto messages
 
 
 # ---------- Members ----------
 def load_members():
     members = {}
-    with open("members.txt", "r", encoding="utf-8") as f:
+    with open(MEMBER_FILE, "r", encoding="utf-8") as f:
         for line in f:
             if line.strip():
                 num, name = line.strip().split(",", 1)
@@ -22,36 +25,41 @@ def load_members():
     return members
 
 
-# ---------- Hold Data ----------
-def load_hold():
-    if not os.path.exists(HOLD_FILE):
+# ---------- Hold ----------
+def load_json(file):
+    if not os.path.exists(file):
         return {}
-    with open(HOLD_FILE, "r") as f:
+    with open(file, "r") as f:
         return json.load(f)
 
 
-def save_hold(data):
-    with open(HOLD_FILE, "w") as f:
+def save_json(file, data):
+    with open(file, "w") as f:
         json.dump(data, f)
 
 
-async def clean_hold_and_notify(app):
-    data = load_hold()
+# ---------- Hold Expiry Check ----------
+async def check_hold_expiry(app):
+    hold = load_json(HOLD_FILE)
+    pending = load_json(PENDING_FILE)
     members = load_members()
+
     today = datetime.date.today().isoformat()
+    expired = []
 
-    removed = []
+    for num in list(hold.keys()):
+        if hold[num]["until"] < today:
+            expired.append(num)
+            pending[num] = True
+            del hold[num]
 
-    for num in list(data.keys()):
-        if data[num]["until"] < today:
-            removed.append(num)
-            del data[num]
+    if expired:
+        save_json(HOLD_FILE, hold)
+        save_json(PENDING_FILE, pending)
 
-    if removed:
-        save_hold(data)
         if CHAT_ID:
-            text = "Hold expired:\n"
-            for num in removed:
+            text = "Hold expired (will join next weekly cycle):\n"
+            for num in expired:
                 name = members.get(int(num), "Unknown")
                 text += f"{num} - {name}\n"
             await app.bot.send_message(chat_id=CHAT_ID, text=text)
@@ -62,29 +70,38 @@ def generate_week():
     global week_counter
 
     members = load_members()
-    hold_data = load_hold()
+    hold = load_json(HOLD_FILE)
+    pending = load_json(PENDING_FILE)
 
-    # Remove held members
-    active = [ (num, name) for num, name in members.items() if str(num) not in hold_data ]
+    # Active members = not on hold
+    active = [num for num in members if str(num) not in hold]
 
-    if len(active) == 0:
-        return "All members are on hold."
-
+    # Sort base order
     active.sort()
-    total = len(active)
 
-    # Invitation Tokens (forward)
+    # Move pending_return members to end
+    end_list = [int(num) for num in pending.keys() if int(num) in active]
+    active = [num for num in active if num not in end_list] + end_list
+
+    # Clear pending after placing
+    save_json(PENDING_FILE, {})
+
+    total = len(active)
+    if total == 0:
+        return "No active members."
+
+    # Forward list
     start = (week_counter * 7) % total
     tokens = []
     for i in range(7):
-        tokens.append(active[(start + i) % total][1])
+        tokens.append(members[active[(start + i) % total]])
 
-    # Paws (reverse)
+    # Reverse list
     rev = list(reversed(active))
     start2 = (week_counter * 7) % total
     paws = []
     for i in range(7):
-        paws.append(rev[(start2 + i) % total][1])
+        paws.append(members[rev[(start2 + i) % total]])
 
     week_counter += 1
 
@@ -106,16 +123,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def week(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await clean_hold_and_notify(context.application)
+    await check_hold_expiry(context.application)
     await update.message.reply_text(generate_week())
-
-
-async def members(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    members = load_members()
-    text = "Members:\n"
-    for num in sorted(members):
-        text += f"{num}. {members[num]}\n"
-    await update.message.reply_text(text)
 
 
 async def hold(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -131,46 +140,32 @@ async def hold(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Member not found.")
         return
 
-    data = load_hold()
+    hold = load_json(HOLD_FILE)
     until = (datetime.date.today() + datetime.timedelta(days=days)).isoformat()
 
-    if num in data:
-        data[num]["offense"] += 1
+    if num in hold:
+        hold[num]["offense"] += 1
     else:
-        data[num] = {"offense": 1}
+        hold[num] = {"offense": 1}
 
-    data[num]["until"] = until
-    save_hold(data)
+    hold[num]["until"] = until
+    save_json(HOLD_FILE, hold)
 
-    name = members[int(num)]
-    await update.message.reply_text(f"{name} on hold for {days} days.")
-
-
-async def unhold(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if len(context.args) < 1:
-        return
-
-    num = context.args[0]
-    data = load_hold()
-    members = load_members()
-
-    if num in data:
-        del data[num]
-        save_hold(data)
-        name = members.get(int(num), "Unknown")
-        await update.message.reply_text(f"{name} removed from hold.")
+    await update.message.reply_text(
+        f"{members[int(num)]} on hold for {days} days (will return next weekly cycle)."
+    )
 
 
 async def holdlist(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    data = load_hold()
+    hold = load_json(HOLD_FILE)
     members = load_members()
 
-    if not data:
+    if not hold:
         await update.message.reply_text("No members on hold.")
         return
 
     text = "Hold List:\n"
-    for num, info in data.items():
+    for num, info in hold.items():
         name = members.get(int(num), "Unknown")
         text += f"{num}. {name} | Until: {info['until']} | Offense: {info['offense']}\n"
 
@@ -178,10 +173,14 @@ async def holdlist(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ---------- Scheduler ----------
-async def scheduled_week(context: ContextTypes.DEFAULT_TYPE):
-    await clean_hold_and_notify(context.application)
+async def weekly_job(context: ContextTypes.DEFAULT_TYPE):
+    await check_hold_expiry(context.application)
     text = generate_week()
     await context.bot.send_message(chat_id=context.job.chat_id, text=text)
+
+
+async def daily_hold_check(context: ContextTypes.DEFAULT_TYPE):
+    await check_hold_expiry(context.application)
 
 
 def main():
@@ -189,18 +188,19 @@ def main():
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("week", week))
-    app.add_handler(CommandHandler("members", members))
     app.add_handler(CommandHandler("hold", hold))
-    app.add_handler(CommandHandler("unhold", unhold))
     app.add_handler(CommandHandler("holdlist", holdlist))
 
-    # Weekly auto post (optional)
     job_queue = app.job_queue
+
     if CHAT_ID:
-        time_utc = datetime.time(hour=12, minute=0)  # Monday 5:30 PM IST
+        # Daily expiry check
+        job_queue.run_daily(daily_hold_check, time=datetime.time(hour=0, minute=0))
+
+        # Monday 5:30 PM IST (12:00 UTC)
         job_queue.run_daily(
-            scheduled_week,
-            time=time_utc,
+            weekly_job,
+            time=datetime.time(hour=12, minute=0),
             days=(0,),
             chat_id=CHAT_ID
         )
