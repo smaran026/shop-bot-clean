@@ -1,212 +1,214 @@
 import os
 import json
-import datetime
+from datetime import datetime, timedelta, time
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
 TOKEN = os.getenv("TOKEN")
 
-week_counter = 0
+MEMBERS_FILE = "members.json"
 HOLD_FILE = "hold.json"
-PENDING_FILE = "pending_return.json"
-MEMBER_FILE = "members.txt"
 
-CHAT_ID = None  # Put group ID later for auto messages
+GROUP_SIZE = 7
+IST_OFFSET = timedelta(hours=5, minutes=30)
 
+# ------------------ FILE HELPERS ------------------
 
-# ---------- Members ----------
 def load_members():
-    members = {}
-    with open(MEMBER_FILE, "r", encoding="utf-8") as f:
-        for line in f:
-            if line.strip():
-                num, name = line.strip().split(",", 1)
-                members[int(num)] = name
-    return members
-
-
-# ---------- Hold ----------
-def load_json(file):
-    if not os.path.exists(file):
-        return {}
-    with open(file, "r") as f:
+    with open(MEMBERS_FILE, "r") as f:
         return json.load(f)
 
+def save_members(data):
+    with open(MEMBERS_FILE, "w") as f:
+        json.dump(data, f, indent=4)
 
-def save_json(file, data):
-    with open(file, "w") as f:
-        json.dump(data, f)
+def load_hold():
+    if not os.path.exists(HOLD_FILE):
+        return {}
+    with open(HOLD_FILE, "r") as f:
+        return json.load(f)
 
+def save_hold(data):
+    with open(HOLD_FILE, "w") as f:
+        json.dump(data, f, indent=4)
 
-# ---------- Hold Expiry Check ----------
-async def check_hold_expiry(app):
-    hold = load_json(HOLD_FILE)
-    pending = load_json(PENDING_FILE)
+# ------------------ TIME LOGIC ------------------
+
+def now_ist():
+    return datetime.utcnow() + IST_OFFSET
+
+def next_monday_530(after_date):
+    target = after_date + timedelta(days=30)
+
+    days_ahead = 0 - target.weekday()  # Monday = 0
+    if days_ahead <= 0:
+        days_ahead += 7
+
+    next_monday = target + timedelta(days=days_ahead)
+    return datetime.combine(next_monday.date(), time(17, 30))
+
+# ------------------ HOLD PROCESSING ------------------
+
+def process_expired_holds():
+    hold = load_hold()
     members = load_members()
+    now = now_ist()
 
-    today = datetime.date.today().isoformat()
-    expired = []
+    changed = False
 
-    for num in list(hold.keys()):
-        if hold[num]["until"] < today:
-            expired.append(num)
-            pending[num] = True
-            del hold[num]
+    for mid in list(hold.keys()):
+        return_time = datetime.fromisoformat(hold[mid]["return_time"])
+        if now >= return_time:
+            # Move member to end
+            member = next(m for m in members if m["id"] == int(mid))
+            members = [m for m in members if m["id"] != int(mid)]
+            members.append(member)
 
-    if expired:
-        save_json(HOLD_FILE, hold)
-        save_json(PENDING_FILE, pending)
+            del hold[mid]
+            changed = True
 
-        if CHAT_ID:
-            text = "Hold expired (will join next weekly cycle):\n"
-            for num in expired:
-                name = members.get(int(num), "Unknown")
-                text += f"{num} - {name}\n"
-            await app.bot.send_message(chat_id=CHAT_ID, text=text)
+    if changed:
+        save_members(members)
+        save_hold(hold)
 
+# ------------------ QUEUE ------------------
 
-# ---------- Weekly Queue ----------
-def generate_week():
-    global week_counter
-
+def active_members():
+    process_expired_holds()
     members = load_members()
-    hold = load_json(HOLD_FILE)
-    pending = load_json(PENDING_FILE)
+    hold = load_hold()
+    return [m for m in members if str(m["id"]) not in hold]
 
-    # Active members = not on hold
-    active = [num for num in members if str(num) not in hold]
+def week_number():
+    start = datetime(2026, 1, 5)  # Monday reference
+    now = now_ist()
+    return ((now - start).days // 7)
 
-    # Sort base order
-    active.sort()
+def get_week_groups():
+    members = active_members()
+    w = week_number()
 
-    # Move pending_return members to end
-    end_list = [int(num) for num in pending.keys() if int(num) in active]
-    active = [num for num in active if num not in end_list] + end_list
+    start = (w * GROUP_SIZE) % len(members)
 
-    # Clear pending after placing
-    save_json(PENDING_FILE, {})
+    invitation = []
+    for i in range(GROUP_SIZE):
+        invitation.append(members[(start + i) % len(members)])
 
-    total = len(active)
-    if total == 0:
-        return "No active members."
+    paws = [m for m in members if m not in invitation]
 
-    # Forward list
-    start = (week_counter * 7) % total
-    tokens = []
-    for i in range(7):
-        tokens.append(members[active[(start + i) % total]])
+    return invitation, paws
 
-    # Reverse list
-    rev = list(reversed(active))
-    start2 = (week_counter * 7) % total
-    paws = []
-    for i in range(7):
-        paws.append(members[rev[(start2 + i) % total]])
-
-    week_counter += 1
-
-    text = f"Week {week_counter}\n\n"
-    text += "Invitation Tokens:\n"
-    for i, name in enumerate(tokens, 1):
-        text += f"{i}. {name}\n"
-
-    text += "\nPaws:\n"
-    for i, name in enumerate(paws, 1):
-        text += f"{i}. {name}\n"
-
-    return text
-
-
-# ---------- Commands ----------
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Clan Rotation Bot active.")
-
+# ------------------ COMMANDS ------------------
 
 async def week(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await check_hold_expiry(context.application)
-    await update.message.reply_text(generate_week())
+    invitation, paws = get_week_groups()
 
+    msg = "📅 This Week\n\n"
+    msg += "Invitation Tokens:\n"
+    for m in invitation:
+        msg += f"{m['id']}. {m['name']}\n"
+
+    msg += "\nPaws:\n"
+    for m in paws:
+        msg += f"{m['id']}. {m['name']}\n"
+
+    await update.message.reply_text(msg)
+
+async def queues(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    members = load_members()
+    msg = "Full Queue Order:\n"
+    for m in members:
+        msg += f"{m['id']}. {m['name']}\n"
+
+    await update.message.reply_text(msg)
 
 async def hold(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if len(context.args) < 2:
-        await update.message.reply_text("Usage: /hold <number> <days>")
+    if not context.args:
+        await update.message.reply_text("Usage: /hold <number>")
         return
 
-    num = context.args[0]
-    days = int(context.args[1])
-
+    mid = context.args[0]
+    hold = load_hold()
     members = load_members()
-    if int(num) not in members:
-        await update.message.reply_text("Member not found.")
+
+    member = next((m for m in members if str(m["id"]) == mid), None)
+    if not member:
+        await update.message.reply_text("Invalid member number")
         return
 
-    hold = load_json(HOLD_FILE)
-    until = (datetime.date.today() + datetime.timedelta(days=days)).isoformat()
+    return_time = next_monday_530(now_ist())
 
-    if num in hold:
-        hold[num]["offense"] += 1
-    else:
-        hold[num] = {"offense": 1}
+    hold[mid] = {
+        "name": member["name"],
+        "return_time": return_time.isoformat()
+    }
 
-    hold[num]["until"] = until
-    save_json(HOLD_FILE, hold)
+    save_hold(hold)
 
     await update.message.reply_text(
-        f"{members[int(num)]} on hold for {days} days (will return next weekly cycle)."
+        f"{member['name']} on hold.\nReturns: {return_time.strftime('%d %b %Y, %I:%M %p IST')}"
     )
 
-
-async def holdlist(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    hold = load_json(HOLD_FILE)
-    members = load_members()
-
-    if not hold:
-        await update.message.reply_text("No members on hold.")
+async def unhold(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.args:
         return
 
-    text = "Hold List:\n"
-    for num, info in hold.items():
-        name = members.get(int(num), "Unknown")
-        text += f"{num}. {name} | Until: {info['until']} | Offense: {info['offense']}\n"
+    mid = context.args[0]
+    hold = load_hold()
 
-    await update.message.reply_text(text)
+    if mid in hold:
+        del hold[mid]
+        save_hold(hold)
+        await update.message.reply_text("Removed from hold")
 
+async def holdlist(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    hold = load_hold()
 
-# ---------- Scheduler ----------
-async def weekly_job(context: ContextTypes.DEFAULT_TYPE):
-    await check_hold_expiry(context.application)
-    text = generate_week()
-    await context.bot.send_message(chat_id=context.job.chat_id, text=text)
+    if not hold:
+        await update.message.reply_text("No members on hold")
+        return
 
+    msg = "Hold List:\n"
+    for mid, data in hold.items():
+        rt = datetime.fromisoformat(data["return_time"])
+        msg += f"{mid}. {data['name']} → {rt.strftime('%d %b %Y')}\n"
 
-async def daily_hold_check(context: ContextTypes.DEFAULT_TYPE):
-    await check_hold_expiry(context.application)
+    await update.message.reply_text(msg)
 
+# NEW FUNCTION
+async def swap(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if len(context.args) != 2:
+        await update.message.reply_text("Usage: /swap A B")
+        return
+
+    a, b = int(context.args[0]), int(context.args[1])
+    members = load_members()
+
+    idx_a = next(i for i,m in enumerate(members) if m["id"] == a)
+    idx_b = next(i for i,m in enumerate(members) if m["id"] == b)
+
+    members[idx_a], members[idx_b] = members[idx_b], members[idx_a]
+    save_members(members)
+
+    await update.message.reply_text("Members swapped")
+
+# ------------------ START ------------------
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Clan Rotation Bot Active")
 
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("week", week))
+    app.add_handler(CommandHandler("queues", queues))
     app.add_handler(CommandHandler("hold", hold))
+    app.add_handler(CommandHandler("unhold", unhold))
     app.add_handler(CommandHandler("holdlist", holdlist))
-
-    job_queue = app.job_queue
-
-    if CHAT_ID:
-        # Daily expiry check
-        job_queue.run_daily(daily_hold_check, time=datetime.time(hour=0, minute=0))
-
-        # Monday 5:30 PM IST (12:00 UTC)
-        job_queue.run_daily(
-            weekly_job,
-            time=datetime.time(hour=12, minute=0),
-            days=(0,),
-            chat_id=CHAT_ID
-        )
+    app.add_handler(CommandHandler("swap", swap))
 
     app.run_polling()
-
 
 if __name__ == "__main__":
     main()
