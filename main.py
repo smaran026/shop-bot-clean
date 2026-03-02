@@ -1,34 +1,34 @@
 import os
 import json
-from datetime import datetime, timedelta
+from datetime import time
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
 TOKEN = os.getenv("TOKEN")
 ADMIN_ID = 1228141945
+
 DATA_FILE = "data.json"
+MEMBERS_FILE = "members.json"
 BUYERS_PER_WEEK = 7
 
-# Initial members (edit if needed)
-DEFAULT_MEMBERS = [
-"Руслан","Dimario","madness","Эд","CITADEL - VIP",
-"Татьяна Русакова","Умар Раисов","Nikolay Kopnin",
-"Jonce","Vladimir","Если честно...","Idris Mayar",
-"Горыныч","@AK1200083","DeletE Маккейн",
-"Smaran Shetty","Максим","Антон Суханов",
-"Александр","Юрий","AIFFAI","Владимир","Эдгар Левин"
-]
+# ---------- Load Members ----------
+def load_members():
+    with open(MEMBERS_FILE, "r", encoding="utf-8") as f:
+        members = json.load(f)
+    return members
 
-# ---------- Data Handling ----------
+members_data = load_members()
+member_lookup = {m["name"]: m["id"] for m in members_data}
+member_names = [m["name"] for m in members_data]
 
+# ---------- Data ----------
 def load_data():
     if not os.path.exists(DATA_FILE):
         data = {
-            "rotation": DEFAULT_MEMBERS.copy(),
-            "hold": {},          # {index: {"days": X, "offenses": Y}}
-            "swap": [],          # list of indices
-            "current_week": [],
-            "last_run": ""
+            "inv_queue": member_names.copy(),
+            "paws_queue": member_names.copy(),
+            "current_inv": [],
+            "current_paws": []
         }
         save_data(data)
         return data
@@ -42,28 +42,92 @@ def save_data(data):
 
 data = load_data()
 
-# ---------- Helper ----------
-
 def is_admin(user_id):
     return user_id == ADMIN_ID
 
-def next_monday_530_ist():
-    now = datetime.utcnow() + timedelta(hours=5, minutes=30)
-    days_ahead = (0 - now.weekday()) % 7
-    target = now + timedelta(days=days_ahead)
-    target = target.replace(hour=17, minute=30, second=0, microsecond=0)
-    return target
-
-def run_weekly_rotation():
+# ---------- Weekly Logic ----------
+def generate_week():
     global data
 
-    # Reduce hold days
-    to_remove = []
-    for idx in data["hold"]:
-        data["hold"][idx]["days"] -= 1
-        if data["hold"][idx]["days"] <= 0:
-            to_remove.append(idx)
-    for idx in to_remove:
+    inv_queue = data["inv_queue"]
+    paws_queue = data["paws_queue"]
+
+    # Invitation → first 7
+    invitation_week = inv_queue[:BUYERS_PER_WEEK]
+
+    # Paws → from end, avoid overlap
+    paws_week = []
+    for name in reversed(paws_queue):
+        if name not in invitation_week:
+            paws_week.append(name)
+        if len(paws_week) == BUYERS_PER_WEEK:
+            break
+
+    data["current_inv"] = invitation_week
+    data["current_paws"] = paws_week
+
+    # Rotate queues
+    data["inv_queue"] = inv_queue[BUYERS_PER_WEEK:] + inv_queue[:BUYERS_PER_WEEK]
+    data["paws_queue"] = paws_queue[-BUYERS_PER_WEEK:] + paws_queue[:-BUYERS_PER_WEEK]
+
+    save_data(data)
+
+# ---------- Commands ----------
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Clan Rotation Bot Active")
+
+async def week(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not data["current_inv"]:
+        await update.message.reply_text("No week generated yet.")
+        return
+
+    msg = "📅 Weekly Buyers\n\n"
+
+    msg += "🎟 Invitation Tokens:\n"
+    for name in data["current_inv"]:
+        msg += f"{member_lookup[name]}. {name}\n"
+
+    msg += "\n🐾 Paws:\n"
+    for name in data["current_paws"]:
+        msg += f"{member_lookup[name]}. {name}\n"
+
+    msg += "\nReset: Monday 5:30 PM IST"
+
+    await update.message.reply_text(msg)
+
+async def full(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = "Full Members List:\n"
+    for m in members_data:
+        msg += f"{m['id']}. {m['name']}\n"
+    await update.message.reply_text(msg)
+
+# ---------- Scheduler ----------
+async def weekly_job(context: ContextTypes.DEFAULT_TYPE):
+    generate_week()
+    await context.bot.send_message(
+        chat_id=ADMIN_ID,
+        text="Weekly rotation generated"
+    )
+
+# ---------- Main ----------
+def main():
+    app = ApplicationBuilder().token(TOKEN).build()
+
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("week", week))
+    app.add_handler(CommandHandler("full", full))
+
+    # Monday 5:30 PM IST = 12:00 UTC
+    job_queue = app.job_queue
+    job_queue.run_daily(
+        weekly_job,
+        time=time(hour=12, minute=0)
+    )
+
+    app.run_polling()
+
+if __name__ == "__main__":
+    main()    for idx in to_remove:
         del data["hold"][idx]
 
     available = [
