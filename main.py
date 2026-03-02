@@ -7,206 +7,192 @@ from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 TOKEN = os.getenv("TOKEN")
 
 MEMBERS_FILE = "members.json"
+TOKENS_QUEUE_FILE = "tokens_queue.json"
+PAWS_QUEUE_FILE = "paws_queue.json"
 HOLD_FILE = "hold.json"
+COOLDOWN_FILE = "cooldown.json"
 
 GROUP_SIZE = 7
 IST_OFFSET = timedelta(hours=5, minutes=30)
 
-# ------------------ FILE HELPERS ------------------
-
-def load_members():
-    with open(MEMBERS_FILE, "r") as f:
-        return json.load(f)
-
-def save_members(data):
-    with open(MEMBERS_FILE, "w") as f:
-        json.dump(data, f, indent=4)
-
-def load_hold():
-    if not os.path.exists(HOLD_FILE):
-        return {}
-    with open(HOLD_FILE, "r") as f:
-        return json.load(f)
-
-def save_hold(data):
-    with open(HOLD_FILE, "w") as f:
-        json.dump(data, f, indent=4)
-
-# ------------------ TIME LOGIC ------------------
+# ---------- Helpers ----------
 
 def now_ist():
     return datetime.utcnow() + IST_OFFSET
 
-def next_monday_530(after_date):
-    target = after_date + timedelta(days=30)
+def load_json(file, default):
+    if not os.path.exists(file):
+        with open(file, "w") as f:
+            json.dump(default, f)
+        return default
+    with open(file, "r") as f:
+        return json.load(f)
 
-    days_ahead = 0 - target.weekday()  # Monday = 0
-    if days_ahead <= 0:
-        days_ahead += 7
+def save_json(file, data):
+    with open(file, "w") as f:
+        json.dump(data, f, indent=2)
 
-    next_monday = target + timedelta(days=days_ahead)
-    return datetime.combine(next_monday.date(), time(17, 30))
+# ---------- Load Members ----------
 
-# ------------------ HOLD PROCESSING ------------------
+def load_members():
+    return load_json(MEMBERS_FILE, [])
 
-def process_expired_holds():
-    hold = load_hold()
+def initialize_queues():
     members = load_members()
+    ids = [m["id"] for m in members]
+
+    tokens = load_json(TOKENS_QUEUE_FILE, ids)
+    paws = load_json(PAWS_QUEUE_FILE, ids)
+
+    if not tokens:
+        save_json(TOKENS_QUEUE_FILE, ids)
+    if not paws:
+        save_json(PAWS_QUEUE_FILE, ids)
+
+# ---------- Restrictions ----------
+
+def active_member_ids():
+    members = load_members()
+    ids = [m["id"] for m in members]
+
+    hold = load_json(HOLD_FILE, {})
+    cooldown = load_json(COOLDOWN_FILE, {})
+
     now = now_ist()
 
-    changed = False
-
+    # remove expired hold
     for mid in list(hold.keys()):
-        return_time = datetime.fromisoformat(hold[mid]["return_time"])
-        if now >= return_time:
-            # Move member to end
-            member = next(m for m in members if m["id"] == int(mid))
-            members = [m for m in members if m["id"] != int(mid)]
-            members.append(member)
-
+        if now >= datetime.fromisoformat(hold[mid]):
             del hold[mid]
-            changed = True
+    save_json(HOLD_FILE, hold)
 
-    if changed:
-        save_members(members)
-        save_hold(hold)
+    # remove expired cooldown
+    for mid in list(cooldown.keys()):
+        if now >= datetime.fromisoformat(cooldown[mid]):
+            del cooldown[mid]
+    save_json(COOLDOWN_FILE, cooldown)
 
-# ------------------ QUEUE ------------------
+    blocked = set(int(x) for x in hold.keys()) | set(int(x) for x in cooldown.keys())
 
-def active_members():
-    process_expired_holds()
-    members = load_members()
-    hold = load_hold()
-    return [m for m in members if str(m["id"]) not in hold]
+    return [i for i in ids if i not in blocked]
+
+# ---------- Weekly Selection ----------
 
 def week_number():
-    start = datetime(2026, 1, 5)  # Monday reference
-    now = now_ist()
-    return ((now - start).days // 7)
+    ref = datetime(2026, 1, 5)
+    return ((now_ist() - ref).days) // 7
 
-def get_week_groups():
-    members = active_members()
+def generate_week():
+    initialize_queues()
+
+    members = load_members()
+    member_map = {m["id"]: m["name"] for m in members}
+
+    active_ids = active_member_ids()
+
+    tokens_queue = load_json(TOKENS_QUEUE_FILE, [])
+    paws_queue = load_json(PAWS_QUEUE_FILE, [])
+
+    # Filter queues by active members
+    tokens_queue = [i for i in tokens_queue if i in active_ids]
+    paws_queue = [i for i in paws_queue if i in active_ids]
+
     w = week_number()
 
-    start = (w * GROUP_SIZE) % len(members)
-
-    invitation = []
+    start_t = (w * GROUP_SIZE) % len(tokens_queue)
+    tokens_ids = []
     for i in range(GROUP_SIZE):
-        invitation.append(members[(start + i) % len(members)])
+        tokens_ids.append(tokens_queue[(start_t + i) % len(tokens_queue)])
 
-    paws = [m for m in members if m not in invitation]
+    # Paws: pick 7 that are not in tokens
+    paws_candidates = [i for i in paws_queue if i not in tokens_ids]
 
-    return invitation, paws
+    start_p = (w * GROUP_SIZE) % len(paws_candidates)
+    paws_ids = []
+    for i in range(GROUP_SIZE):
+        paws_ids.append(paws_candidates[(start_p + i) % len(paws_candidates)])
 
-# ------------------ COMMANDS ------------------
+    text = f"Week {w+1}\n\n"
+
+    text += "Invitation Tokens:\n"
+    for mid in tokens_ids:
+        text += f"{mid}. {member_map[mid]}\n"
+
+    text += "\nPaws:\n"
+    for mid in paws_ids:
+        text += f"{mid}. {member_map[mid]}\n"
+
+    return text
+
+# ---------- Commands ----------
 
 async def week(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    invitation, paws = get_week_groups()
+    await update.message.reply_text(generate_week())
 
-    msg = "📅 This Week\n\n"
-    msg += "Invitation Tokens:\n"
-    for m in invitation:
-        msg += f"{m['id']}. {m['name']}\n"
-
-    msg += "\nPaws:\n"
-    for m in paws:
-        msg += f"{m['id']}. {m['name']}\n"
-
-    await update.message.reply_text(msg)
-
-async def queues(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    members = load_members()
-    msg = "Full Queue Order:\n"
-    for m in members:
-        msg += f"{m['id']}. {m['name']}\n"
-
-    await update.message.reply_text(msg)
-
-async def hold(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args:
-        await update.message.reply_text("Usage: /hold <number>")
-        return
-
-    mid = context.args[0]
-    hold = load_hold()
-    members = load_members()
-
-    member = next((m for m in members if str(m["id"]) == mid), None)
-    if not member:
-        await update.message.reply_text("Invalid member number")
-        return
-
-    return_time = next_monday_530(now_ist())
-
-    hold[mid] = {
-        "name": member["name"],
-        "return_time": return_time.isoformat()
-    }
-
-    save_hold(hold)
-
-    await update.message.reply_text(
-        f"{member['name']} on hold.\nReturns: {return_time.strftime('%d %b %Y, %I:%M %p IST')}"
-    )
-
-async def unhold(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args:
-        return
-
-    mid = context.args[0]
-    hold = load_hold()
-
-    if mid in hold:
-        del hold[mid]
-        save_hold(hold)
-        await update.message.reply_text("Removed from hold")
-
-async def holdlist(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    hold = load_hold()
-
-    if not hold:
-        await update.message.reply_text("No members on hold")
-        return
-
-    msg = "Hold List:\n"
-    for mid, data in hold.items():
-        rt = datetime.fromisoformat(data["return_time"])
-        msg += f"{mid}. {data['name']} → {rt.strftime('%d %b %Y')}\n"
-
-    await update.message.reply_text(msg)
-
-# NEW FUNCTION
-async def swap(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# Permanent swap inside Tokens queue
+async def swap_tokens(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if len(context.args) != 2:
-        await update.message.reply_text("Usage: /swap A B")
         return
 
     a, b = int(context.args[0]), int(context.args[1])
-    members = load_members()
+    q = load_json(TOKENS_QUEUE_FILE, [])
 
-    idx_a = next(i for i,m in enumerate(members) if m["id"] == a)
-    idx_b = next(i for i,m in enumerate(members) if m["id"] == b)
+    if a in q and b in q:
+        ia, ib = q.index(a), q.index(b)
+        q[ia], q[ib] = q[ib], q[ia]
+        save_json(TOKENS_QUEUE_FILE, q)
+        await update.message.reply_text("Tokens queue updated")
 
-    members[idx_a], members[idx_b] = members[idx_b], members[idx_a]
-    save_members(members)
+# Permanent swap inside Paws queue
+async def swap_paws(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if len(context.args) != 2:
+        return
 
-    await update.message.reply_text("Members swapped")
+    a, b = int(context.args[0]), int(context.args[1])
+    q = load_json(PAWS_QUEUE_FILE, [])
 
-# ------------------ START ------------------
+    if a in q and b in q:
+        ia, ib = q.index(a), q.index(b)
+        q[ia], q[ib] = q[ib], q[ia]
+        save_json(PAWS_QUEUE_FILE, q)
+        await update.message.reply_text("Paws queue updated")
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Clan Rotation Bot Active")
+# Hold (30 days → next Monday handled automatically)
+async def hold(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.args:
+        return
+
+    mid = context.args[0]
+    hold = load_json(HOLD_FILE, {})
+
+    return_time = now_ist() + timedelta(days=30)
+    hold[mid] = return_time.isoformat()
+    save_json(HOLD_FILE, hold)
+
+    await update.message.reply_text(f"{mid} on hold for 30 days")
+
+# Cooldown (1 day)
+async def cooldown(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.args:
+        return
+
+    mid = context.args[0]
+    cd = load_json(COOLDOWN_FILE, {})
+    cd[mid] = (now_ist() + timedelta(days=1)).isoformat()
+    save_json(COOLDOWN_FILE, cd)
+
+    await update.message.reply_text(f"{mid} on cooldown for 1 day")
+
+# ---------- Main ----------
 
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
-    app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("week", week))
-    app.add_handler(CommandHandler("queues", queues))
+    app.add_handler(CommandHandler("swap_tokens", swap_tokens))
+    app.add_handler(CommandHandler("swap_paws", swap_paws))
     app.add_handler(CommandHandler("hold", hold))
-    app.add_handler(CommandHandler("unhold", unhold))
-    app.add_handler(CommandHandler("holdlist", holdlist))
-    app.add_handler(CommandHandler("swap", swap))
+    app.add_handler(CommandHandler("cooldown", cooldown))
 
     app.run_polling()
 
