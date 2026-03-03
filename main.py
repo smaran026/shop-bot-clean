@@ -18,7 +18,7 @@ GROUP_SIZE = 7
 IST_OFFSET = timedelta(hours=5, minutes=30)
 
 
-# ------------------ BASIC HELPERS ------------------
+# ---------------- BASIC HELPERS ----------------
 
 def now_ist():
     return datetime.utcnow() + IST_OFFSET
@@ -42,7 +42,7 @@ def is_admin(update: Update):
     return update.effective_user.id == ADMIN_ID
 
 
-# ------------------ MEMBERS ------------------
+# ---------------- MEMBERS ----------------
 
 def load_members():
     return load_json(MEMBERS_FILE, [])
@@ -59,7 +59,7 @@ def initialize_queues():
         save_json(PAWS_QUEUE_FILE, ids)
 
 
-# ------------------ HOLD ------------------
+# ---------------- HOLD ----------------
 
 def clean_expired_holds():
     hold = load_json(HOLD_FILE, {})
@@ -77,7 +77,7 @@ def clean_expired_holds():
     return hold
 
 
-def active_member_ids():
+def active_ids():
     members = load_members()
     ids = [m["id"] for m in members]
     hold = clean_expired_holds()
@@ -85,119 +85,125 @@ def active_member_ids():
     return [i for i in ids if i not in blocked]
 
 
-# ------------------ WEEK CALCULATION ------------------
+# ---------------- WEEK CORE LOGIC ----------------
 
 def week_number(offset=0):
     ref = datetime(2026, 1, 5)
     return ((now_ist() - ref).days // 7) + offset
 
 
-def generate_week(offset=0):
+def calculate_week(offset=0):
     initialize_queues()
 
     members = load_members()
     member_map = {m["id"]: m["name"] for m in members}
 
-    active_ids = active_member_ids()
-
     tokens_queue = load_json(TOKENS_QUEUE_FILE, [])
     paws_queue = load_json(PAWS_QUEUE_FILE, [])
 
-    tokens_queue = [i for i in tokens_queue if i in active_ids]
-    paws_queue = [i for i in paws_queue if i in active_ids]
+    active = active_ids()
 
-    if len(tokens_queue) < GROUP_SIZE:
-        return "Not enough active members."
+    tokens_queue = [i for i in tokens_queue if i in active]
+    paws_queue = [i for i in paws_queue if i in active]
 
     w = week_number(offset)
 
+    # -------- TOKENS --------
     start_t = (w * GROUP_SIZE) % len(tokens_queue)
-    tokens_ids = [
+    tokens_this = [
         tokens_queue[(start_t + i) % len(tokens_queue)]
         for i in range(GROUP_SIZE)
     ]
 
-    paws_candidates = [i for i in paws_queue if i not in tokens_ids]
-
-    if len(paws_candidates) < GROUP_SIZE:
-        return "Not enough members for paws."
-
-    start_p = (w * GROUP_SIZE) % len(paws_candidates)
-    paws_ids = [
-        paws_candidates[(start_p + i) % len(paws_candidates)]
+    # -------- PAWS --------
+    paws_pool = [i for i in paws_queue if i not in tokens_this]
+    start_p = (w * GROUP_SIZE) % len(paws_pool)
+    paws_this = [
+        paws_pool[(start_p + i) % len(paws_pool)]
         for i in range(GROUP_SIZE)
     ]
 
-    text = f"Week {w+1}\n\n"
-
-    text += "Invitation Tokens:\n"
-    for mid in tokens_ids:
-        text += f"{mid}. {member_map[mid]}\n"
-
-    text += "\nPaws:\n"
-    for mid in paws_ids:
-        text += f"{mid}. {member_map[mid]}\n"
-
-    return text
+    return tokens_this, paws_this, member_map
 
 
-# ------------------ COMMANDS ------------------
+# ---------------- COMMANDS ----------------
 
 async def week(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(generate_week())
+    tokens, paws, member_map = calculate_week()
+
+    text = "This Week\n\n"
+
+    text += "Invitation Tokens:\n"
+    for mid in tokens:
+        text += f"{member_map[mid]}\n"
+
+    text += "\nPaws:\n"
+    for mid in paws:
+        text += f"{member_map[mid]}\n"
+
+    await update.message.reply_text(text)
 
 
 async def nextweek(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(generate_week(offset=1))
+    tokens, paws, member_map = calculate_week(offset=1)
+
+    text = "Next Week\n\n"
+
+    text += "Invitation Tokens:\n"
+    for mid in tokens:
+        text += f"{member_map[mid]}\n"
+
+    text += "\nPaws:\n"
+    for mid in paws:
+        text += f"{member_map[mid]}\n"
+
+    await update.message.reply_text(text)
 
 
 async def rotation(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    initialize_queues()
-
-    members = load_members()
-    member_map = {m["id"]: m["name"] for m in members}
-    active_ids = active_member_ids()
+    tokens_this, _, member_map = calculate_week()
 
     tokens_queue = load_json(TOKENS_QUEUE_FILE, [])
     paws_queue = load_json(PAWS_QUEUE_FILE, [])
+    active = active_ids()
 
-    tokens_queue = [i for i in tokens_queue if i in active_ids]
-    paws_queue = [i for i in paws_queue if i in active_ids]
+    tokens_queue = [i for i in tokens_queue if i in active]
+    paws_queue = [i for i in paws_queue if i in active]
 
     w = week_number()
-
     start_t = (w * GROUP_SIZE) % len(tokens_queue)
+
     ordered_tokens = [
         tokens_queue[(start_t + i) % len(tokens_queue)]
         for i in range(len(tokens_queue))
     ]
 
-    current_tokens = ordered_tokens[:GROUP_SIZE]
-    paws_candidates = [i for i in paws_queue if i not in current_tokens]
+    paws_pool = [i for i in paws_queue if i not in tokens_this]
+    start_p = (w * GROUP_SIZE) % len(paws_pool)
 
-    start_p = (w * GROUP_SIZE) % len(paws_candidates)
     ordered_paws = [
-        paws_candidates[(start_p + i) % len(paws_candidates)]
-        for i in range(len(paws_candidates))
+        paws_pool[(start_p + i) % len(paws_pool)]
+        for i in range(len(paws_pool))
     ]
 
     text = "Current Rotation Flow\n\n"
 
-    text += "Invitation Tokens Order:\n"
+    text += "INVITATION TOKENS\n"
     for mid in ordered_tokens:
-        text += f"{mid}. {member_map.get(mid,'Unknown')}\n"
+        text += f"{mid}. {member_map[mid]}\n"
 
-    text += "\nPaws Order:\n"
+    text += "\nPAWS\n"
     for mid in ordered_paws:
-        text += f"{mid}. {member_map.get(mid,'Unknown')}\n"
+        text += f"{mid}. {member_map[mid]}\n"
 
     await update.message.reply_text(text)
 
 
+# ---------------- ADMIN ----------------
+
 async def swap_tokens(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update) or len(context.args) != 2:
         return
-
     if not context.args[0].isdigit() or not context.args[1].isdigit():
         return
 
@@ -214,7 +220,6 @@ async def swap_tokens(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def swap_paws(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update) or len(context.args) != 2:
         return
-
     if not context.args[0].isdigit() or not context.args[1].isdigit():
         return
 
@@ -231,7 +236,6 @@ async def swap_paws(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def hold(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update) or not context.args:
         return
-
     if not context.args[0].isdigit():
         return
 
@@ -240,7 +244,7 @@ async def hold(update: Update, context: ContextTypes.DEFAULT_TYPE):
     hold[mid] = (now_ist() + timedelta(days=30)).isoformat()
     save_json(HOLD_FILE, hold)
 
-    await update.message.reply_text(f"{mid} placed on 30-day hold.")
+    await update.message.reply_text("Member placed on 30-day hold.")
 
 
 async def holdlist(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -252,10 +256,10 @@ async def holdlist(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("No members on hold.")
         return
 
-    text = "Hold List:\n\n"
+    text = "Hold List\n\n"
     for mid, return_time in hold.items():
         rt = datetime.fromisoformat(return_time)
-        text += f"{mid}. {member_map.get(int(mid),'Unknown')} → {rt.strftime('%d %b %Y %H:%M')}\n"
+        text += f"{mid}. {member_map.get(int(mid),'Unknown')} → {rt.strftime('%d %b %Y')}\n"
 
     await update.message.reply_text(text)
 
@@ -263,13 +267,10 @@ async def holdlist(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def mute(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update):
         return
-
     if not update.message.reply_to_message:
-        await update.message.reply_text("Reply to a message with /mute <hours>")
+        await update.message.reply_text("Reply with /mute <hours>")
         return
-
     if not context.args or not context.args[0].isdigit():
-        await update.message.reply_text("Usage: reply + /mute <hours>")
         return
 
     hours = int(context.args[0])
@@ -289,9 +290,7 @@ async def mute(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def unmute(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update):
         return
-
     if not update.message.reply_to_message:
-        await update.message.reply_text("Reply to a message with /unmute")
         return
 
     user_id = update.message.reply_to_message.from_user.id
@@ -305,15 +304,23 @@ async def unmute(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("User unmuted.")
 
 
-# ------------------ MONDAY AUTO POST ------------------
+# ---------------- MONDAY AUTO POST ----------------
 
 async def monday_post(context: ContextTypes.DEFAULT_TYPE):
     if GROUP_CHAT_ID:
-        text = generate_week()
+        tokens, paws, member_map = calculate_week()
+        text = "Weekly Rotation\n\n"
+        text += "Invitation Tokens:\n"
+        for mid in tokens:
+            text += f"{member_map[mid]}\n"
+        text += "\nPaws:\n"
+        for mid in paws:
+            text += f"{member_map[mid]}\n"
+
         await context.bot.send_message(chat_id=GROUP_CHAT_ID, text=text)
 
 
-# ------------------ MAIN ------------------
+# ---------------- MAIN ----------------
 
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
@@ -328,11 +335,10 @@ def main():
     app.add_handler(CommandHandler("mute", mute))
     app.add_handler(CommandHandler("unmute", unmute))
 
-    job_queue = app.job_queue
     if GROUP_CHAT_ID:
-        job_queue.run_daily(
+        app.job_queue.run_daily(
             monday_post,
-            time=time(hour=12, minute=0),  # 5:30 PM IST
+            time=time(hour=12, minute=0),
             days=(0,)
         )
 
