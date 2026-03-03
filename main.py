@@ -146,22 +146,50 @@ async def nextweek(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def rotation(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    tokens_queue = load_json(TOKENS_QUEUE_FILE, [])
-    paws_queue = load_json(PAWS_QUEUE_FILE, [])
+    initialize_queues()
+
     members = load_members()
     member_map = {m["id"]: m["name"] for m in members}
 
-    text = "Full Rotation Order\n\n"
+    active_ids = active_member_ids()
 
-    text += "Invitation Tokens Queue:\n"
-    for mid in tokens_queue:
+    tokens_queue = load_json(TOKENS_QUEUE_FILE, [])
+    paws_queue = load_json(PAWS_QUEUE_FILE, [])
+
+    tokens_queue = [i for i in tokens_queue if i in active_ids]
+    paws_queue = [i for i in paws_queue if i in active_ids]
+
+    w = week_number()
+
+    # ----- TOKENS FLOW -----
+    start_t = (w * GROUP_SIZE) % len(tokens_queue)
+    ordered_tokens = [
+        tokens_queue[(start_t + i) % len(tokens_queue)]
+        for i in range(len(tokens_queue))
+    ]
+
+    # ----- PAWS FLOW -----
+    # Remove current week's tokens from paws candidates
+    current_tokens = ordered_tokens[:GROUP_SIZE]
+    paws_candidates = [i for i in paws_queue if i not in current_tokens]
+
+    start_p = (w * GROUP_SIZE) % len(paws_candidates)
+    ordered_paws = [
+        paws_candidates[(start_p + i) % len(paws_candidates)]
+        for i in range(len(paws_candidates))
+    ]
+
+    text = "Current Rotation Flow\n\n"
+
+    text += "Invitation Tokens Order:\n"
+    for mid in ordered_tokens:
         text += f"{mid}. {member_map.get(mid, 'Unknown')}\n"
 
-    text += "\nPaws Queue:\n"
-    for mid in paws_queue:
+    text += "\nPaws Order:\n"
+    for mid in ordered_paws:
         text += f"{mid}. {member_map.get(mid, 'Unknown')}\n"
 
-    await update.message.reply_text(text)
+    await update.message.reply_text(text))
 
 
 async def swap_tokens(update: Update, context: ContextTypes.DEFAULT_TYPE):
