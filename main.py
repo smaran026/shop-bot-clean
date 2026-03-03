@@ -161,16 +161,26 @@ async def nextweek(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def rotation(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    tokens_this, _, member_map = calculate_week()
+    initialize_queues()
+
+    members = load_members()
+    member_map = {m["id"]: m["name"] for m in members}
 
     tokens_queue = load_json(TOKENS_QUEUE_FILE, [])
     paws_queue = load_json(PAWS_QUEUE_FILE, [])
+
     active = active_ids()
 
     tokens_queue = [i for i in tokens_queue if i in active]
     paws_queue = [i for i in paws_queue if i in active]
 
+    if len(tokens_queue) < GROUP_SIZE * 2:
+        await update.message.reply_text("Not enough active members.")
+        return
+
     w = week_number()
+
+    # -------- TOKENS ORDER --------
     start_t = (w * GROUP_SIZE) % len(tokens_queue)
 
     ordered_tokens = [
@@ -178,7 +188,13 @@ async def rotation(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for i in range(len(tokens_queue))
     ]
 
+    tokens_this = ordered_tokens[:GROUP_SIZE]
+    tokens_next = ordered_tokens[GROUP_SIZE:GROUP_SIZE*2]
+    tokens_reserve = ordered_tokens[GROUP_SIZE*2:]
+
+    # -------- PAWS ORDER --------
     paws_pool = [i for i in paws_queue if i not in tokens_this]
+
     start_p = (w * GROUP_SIZE) % len(paws_pool)
 
     ordered_paws = [
@@ -186,15 +202,42 @@ async def rotation(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for i in range(len(paws_pool))
     ]
 
+    paws_this = ordered_paws[:GROUP_SIZE]
+    paws_next = ordered_paws[GROUP_SIZE:GROUP_SIZE*2]
+    paws_reserve = ordered_paws[GROUP_SIZE*2:]
+
+    # -------- BUILD OUTPUT --------
     text = "Current Rotation Flow\n\n"
 
     text += "INVITATION TOKENS\n"
-    for mid in ordered_tokens:
+    text += "This Week:\n"
+    for mid in tokens_this:
         text += f"{mid}. {member_map[mid]}\n"
 
-    text += "\nPAWS\n"
-    for mid in ordered_paws:
+    text += "\nNext Week:\n"
+    for mid in tokens_next:
         text += f"{mid}. {member_map[mid]}\n"
+
+    if tokens_reserve:
+        text += "\nReserve:\n"
+        for mid in tokens_reserve:
+            text += f"{mid}. {member_map[mid]}\n"
+
+    text += "\n--------------------------\n\n"
+
+    text += "PAWS\n"
+    text += "This Week:\n"
+    for mid in paws_this:
+        text += f"{mid}. {member_map[mid]}\n"
+
+    text += "\nNext Week:\n"
+    for mid in paws_next:
+        text += f"{mid}. {member_map[mid]}\n"
+
+    if paws_reserve:
+        text += "\nReserve:\n"
+        for mid in paws_reserve:
+            text += f"{mid}. {member_map[mid]}\n"
 
     await update.message.reply_text(text)
 
