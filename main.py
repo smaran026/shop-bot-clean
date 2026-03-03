@@ -7,7 +7,7 @@ from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 TOKEN = os.getenv("TOKEN")
 
 ADMIN_ID = 1228141945
-GROUP_CHAT_ID = None  # <<< PUT YOUR GROUP ID HERE (e.g. -100xxxxxxxx)
+GROUP_CHAT_ID = None  # PUT YOUR GROUP ID HERE (-100xxxxxxxx)
 
 MEMBERS_FILE = "members.json"
 TOKENS_QUEUE_FILE = "tokens_queue.json"
@@ -18,7 +18,7 @@ GROUP_SIZE = 7
 IST_OFFSET = timedelta(hours=5, minutes=30)
 
 
-# -------------------- Helpers --------------------
+# ------------------ BASIC HELPERS ------------------
 
 def now_ist():
     return datetime.utcnow() + IST_OFFSET
@@ -42,7 +42,7 @@ def is_admin(update: Update):
     return update.effective_user.id == ADMIN_ID
 
 
-# -------------------- Members --------------------
+# ------------------ MEMBERS ------------------
 
 def load_members():
     return load_json(MEMBERS_FILE, [])
@@ -59,7 +59,7 @@ def initialize_queues():
         save_json(PAWS_QUEUE_FILE, ids)
 
 
-# -------------------- Hold Logic --------------------
+# ------------------ HOLD ------------------
 
 def clean_expired_holds():
     hold = load_json(HOLD_FILE, {})
@@ -85,7 +85,7 @@ def active_member_ids():
     return [i for i in ids if i not in blocked]
 
 
-# -------------------- Weekly Logic --------------------
+# ------------------ WEEK CALCULATION ------------------
 
 def week_number(offset=0):
     ref = datetime(2026, 1, 5)
@@ -112,7 +112,10 @@ def generate_week(offset=0):
     w = week_number(offset)
 
     start_t = (w * GROUP_SIZE) % len(tokens_queue)
-    tokens_ids = [tokens_queue[(start_t + i) % len(tokens_queue)] for i in range(GROUP_SIZE)]
+    tokens_ids = [
+        tokens_queue[(start_t + i) % len(tokens_queue)]
+        for i in range(GROUP_SIZE)
+    ]
 
     paws_candidates = [i for i in paws_queue if i not in tokens_ids]
 
@@ -120,7 +123,10 @@ def generate_week(offset=0):
         return "Not enough members for paws."
 
     start_p = (w * GROUP_SIZE) % len(paws_candidates)
-    paws_ids = [paws_candidates[(start_p + i) % len(paws_candidates)] for i in range(GROUP_SIZE)]
+    paws_ids = [
+        paws_candidates[(start_p + i) % len(paws_candidates)]
+        for i in range(GROUP_SIZE)
+    ]
 
     text = f"Week {w+1}\n\n"
 
@@ -135,7 +141,7 @@ def generate_week(offset=0):
     return text
 
 
-# -------------------- Commands --------------------
+# ------------------ COMMANDS ------------------
 
 async def week(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(generate_week())
@@ -150,7 +156,6 @@ async def rotation(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     members = load_members()
     member_map = {m["id"]: m["name"] for m in members}
-
     active_ids = active_member_ids()
 
     tokens_queue = load_json(TOKENS_QUEUE_FILE, [])
@@ -161,15 +166,12 @@ async def rotation(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     w = week_number()
 
-    # ----- TOKENS FLOW -----
     start_t = (w * GROUP_SIZE) % len(tokens_queue)
     ordered_tokens = [
         tokens_queue[(start_t + i) % len(tokens_queue)]
         for i in range(len(tokens_queue))
     ]
 
-    # ----- PAWS FLOW -----
-    # Remove current week's tokens from paws candidates
     current_tokens = ordered_tokens[:GROUP_SIZE]
     paws_candidates = [i for i in paws_queue if i not in current_tokens]
 
@@ -183,13 +185,13 @@ async def rotation(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     text += "Invitation Tokens Order:\n"
     for mid in ordered_tokens:
-        text += f"{mid}. {member_map.get(mid, 'Unknown')}\n"
+        text += f"{mid}. {member_map.get(mid,'Unknown')}\n"
 
     text += "\nPaws Order:\n"
     for mid in ordered_paws:
-        text += f"{mid}. {member_map.get(mid, 'Unknown')}\n"
+        text += f"{mid}. {member_map.get(mid,'Unknown')}\n"
 
-    await update.message.reply_text(text))
+    await update.message.reply_text(text)
 
 
 async def swap_tokens(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -303,7 +305,7 @@ async def unmute(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("User unmuted.")
 
 
-# -------------------- Scheduler --------------------
+# ------------------ MONDAY AUTO POST ------------------
 
 async def monday_post(context: ContextTypes.DEFAULT_TYPE):
     if GROUP_CHAT_ID:
@@ -311,7 +313,7 @@ async def monday_post(context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(chat_id=GROUP_CHAT_ID, text=text)
 
 
-# -------------------- Main --------------------
+# ------------------ MAIN ------------------
 
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
