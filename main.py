@@ -85,7 +85,7 @@ def active_ids():
     return [i for i in ids if i not in blocked]
 
 
-# ---------------- WEEK CORE LOGIC ----------------
+# ---------------- WEEK ENGINE ----------------
 
 def week_number(offset=0):
     ref = datetime(2026, 1, 5)
@@ -108,81 +108,8 @@ def calculate_week(offset=0):
 
     w = week_number(offset)
 
-    # -------- TOKENS --------
+    # ----- TOKENS -----
     start_t = (w * GROUP_SIZE) % len(tokens_queue)
-    tokens_this = [
-        tokens_queue[(start_t + i) % len(tokens_queue)]
-        for i in range(GROUP_SIZE)
-    ]
-
-    # -------- PAWS --------
-    paws_pool = [i for i in paws_queue if i not in tokens_this]
-    start_p = (w * GROUP_SIZE) % len(paws_pool)
-    paws_this = [
-        paws_pool[(start_p + i) % len(paws_pool)]
-        for i in range(GROUP_SIZE)
-    ]
-
-    return tokens_this, paws_this, member_map
-
-
-# ---------------- COMMANDS ----------------
-
-async def week(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    tokens, paws, member_map = calculate_week()
-
-    text = "This Week\n\n"
-
-    text += "Invitation Tokens:\n"
-    for mid in tokens:
-        text += f"{member_map[mid]}\n"
-
-    text += "\nPaws:\n"
-    for mid in paws:
-        text += f"{member_map[mid]}\n"
-
-    await update.message.reply_text(text)
-
-
-async def nextweek(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    tokens, paws, member_map = calculate_week(offset=1)
-
-    text = "Next Week\n\n"
-
-    text += "Invitation Tokens:\n"
-    for mid in tokens:
-        text += f"{member_map[mid]}\n"
-
-    text += "\nPaws:\n"
-    for mid in paws:
-        text += f"{member_map[mid]}\n"
-
-    await update.message.reply_text(text)
-
-
-async def rotation(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    initialize_queues()
-
-    members = load_members()
-    member_map = {m["id"]: m["name"] for m in members}
-
-    tokens_queue = load_json(TOKENS_QUEUE_FILE, [])
-    paws_queue = load_json(PAWS_QUEUE_FILE, [])
-
-    active = active_ids()
-
-    tokens_queue = [i for i in tokens_queue if i in active]
-    paws_queue = [i for i in paws_queue if i in active]
-
-    if len(tokens_queue) < GROUP_SIZE * 2:
-        await update.message.reply_text("Not enough active members.")
-        return
-
-    w = week_number()
-
-    # -------- TOKENS ORDER --------
-    start_t = (w * GROUP_SIZE) % len(tokens_queue)
-
     ordered_tokens = [
         tokens_queue[(start_t + i) % len(tokens_queue)]
         for i in range(len(tokens_queue))
@@ -190,23 +117,88 @@ async def rotation(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     tokens_this = ordered_tokens[:GROUP_SIZE]
     tokens_next = ordered_tokens[GROUP_SIZE:GROUP_SIZE*2]
-    tokens_reserve = ordered_tokens[GROUP_SIZE*2:]
 
-    # -------- PAWS ORDER --------
-    paws_pool = [i for i in paws_queue if i not in tokens_this]
-
-    start_p = (w * GROUP_SIZE) % len(paws_pool)
-
+    # ----- PAWS -----
+    start_p = (w * GROUP_SIZE) % len(paws_queue)
     ordered_paws = [
-        paws_pool[(start_p + i) % len(paws_pool)]
-        for i in range(len(paws_pool))
+        paws_queue[(start_p + i) % len(paws_queue)]
+        for i in range(len(paws_queue))
     ]
 
-    paws_this = ordered_paws[:GROUP_SIZE]
-    paws_next = ordered_paws[GROUP_SIZE:GROUP_SIZE*2]
-    paws_reserve = ordered_paws[GROUP_SIZE*2:]
+    # This Week (replace if collision with tokens_this)
+    paws_this = []
+    for pid in ordered_paws:
+        if pid not in tokens_this and len(paws_this) < GROUP_SIZE:
+            paws_this.append(pid)
 
-    # -------- BUILD OUTPUT --------
+    # Next Week (exchange if collision with tokens_next)
+    paws_next = []
+    for pid in ordered_paws:
+        if (
+            pid not in tokens_next and
+            pid not in paws_this and
+            len(paws_next) < GROUP_SIZE
+        ):
+            paws_next.append(pid)
+
+    return tokens_this, paws_this, tokens_next, paws_next, member_map
+
+
+# ---------------- COMMANDS ----------------
+
+async def week(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    tokens_this, paws_this, _, _, member_map = calculate_week()
+
+    text = "This Week\n\n"
+    text += "Invitation Tokens:\n"
+    for mid in tokens_this:
+        text += f"{member_map[mid]}\n"
+
+    text += "\nPaws:\n"
+    for mid in paws_this:
+        text += f"{member_map[mid]}\n"
+
+    await update.message.reply_text(text)
+
+
+async def nextweek(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    _, _, tokens_next, paws_next, member_map = calculate_week()
+
+    text = "Next Week\n\n"
+    text += "Invitation Tokens:\n"
+    for mid in tokens_next:
+        text += f"{member_map[mid]}\n"
+
+    text += "\nPaws:\n"
+    for mid in paws_next:
+        text += f"{member_map[mid]}\n"
+
+    await update.message.reply_text(text)
+
+
+async def rotation(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    tokens_this, paws_this, tokens_next, paws_next, member_map = calculate_week()
+
+    tokens_queue = load_json(TOKENS_QUEUE_FILE, [])
+    paws_queue = load_json(PAWS_QUEUE_FILE, [])
+    active = active_ids()
+
+    tokens_queue = [i for i in tokens_queue if i in active]
+    paws_queue = [i for i in paws_queue if i in active]
+
+    w = week_number()
+    start_t = (w * GROUP_SIZE) % len(tokens_queue)
+    ordered_tokens = [
+        tokens_queue[(start_t + i) % len(tokens_queue)]
+        for i in range(len(tokens_queue))
+    ]
+
+    start_p = (w * GROUP_SIZE) % len(paws_queue)
+    ordered_paws = [
+        paws_queue[(start_p + i) % len(paws_queue)]
+        for i in range(len(paws_queue))
+    ]
+
     text = "Current Rotation Flow\n\n"
 
     text += "INVITATION TOKENS\n"
@@ -218,12 +210,11 @@ async def rotation(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for mid in tokens_next:
         text += f"{mid}. {member_map[mid]}\n"
 
-    if tokens_reserve:
-        text += "\nReserve:\n"
-        for mid in tokens_reserve:
-            text += f"{mid}. {member_map[mid]}\n"
+    text += "\nReserve:\n"
+    for mid in ordered_tokens[GROUP_SIZE*2:]:
+        text += f"{mid}. {member_map[mid]}\n"
 
-    text += "\n--------------------------\n\n"
+    text += "\n------------------------\n\n"
 
     text += "PAWS\n"
     text += "This Week:\n"
@@ -234,47 +225,14 @@ async def rotation(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for mid in paws_next:
         text += f"{mid}. {member_map[mid]}\n"
 
-    if paws_reserve:
-        text += "\nReserve:\n"
-        for mid in paws_reserve:
-            text += f"{mid}. {member_map[mid]}\n"
+    text += "\nReserve:\n"
+    for mid in ordered_paws[GROUP_SIZE*2:]:
+        text += f"{mid}. {member_map[mid]}\n"
 
     await update.message.reply_text(text)
 
 
 # ---------------- ADMIN ----------------
-
-async def swap_tokens(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update) or len(context.args) != 2:
-        return
-    if not context.args[0].isdigit() or not context.args[1].isdigit():
-        return
-
-    a, b = int(context.args[0]), int(context.args[1])
-    q = load_json(TOKENS_QUEUE_FILE, [])
-
-    if a in q and b in q:
-        ia, ib = q.index(a), q.index(b)
-        q[ia], q[ib] = q[ib], q[ia]
-        save_json(TOKENS_QUEUE_FILE, q)
-        await update.message.reply_text("Tokens queue updated.")
-
-
-async def swap_paws(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update) or len(context.args) != 2:
-        return
-    if not context.args[0].isdigit() or not context.args[1].isdigit():
-        return
-
-    a, b = int(context.args[0]), int(context.args[1])
-    q = load_json(PAWS_QUEUE_FILE, [])
-
-    if a in q and b in q:
-        ia, ib = q.index(a), q.index(b)
-        q[ia], q[ib] = q[ib], q[ia]
-        save_json(PAWS_QUEUE_FILE, q)
-        await update.message.reply_text("Paws queue updated.")
-
 
 async def hold(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update) or not context.args:
@@ -311,7 +269,6 @@ async def mute(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update):
         return
     if not update.message.reply_to_message:
-        await update.message.reply_text("Reply with /mute <hours>")
         return
     if not context.args or not context.args[0].isdigit():
         return
@@ -351,13 +308,13 @@ async def unmute(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def monday_post(context: ContextTypes.DEFAULT_TYPE):
     if GROUP_CHAT_ID:
-        tokens, paws, member_map = calculate_week()
+        tokens_this, paws_this, _, _, member_map = calculate_week()
         text = "Weekly Rotation\n\n"
         text += "Invitation Tokens:\n"
-        for mid in tokens:
+        for mid in tokens_this:
             text += f"{member_map[mid]}\n"
         text += "\nPaws:\n"
-        for mid in paws:
+        for mid in paws_this:
             text += f"{member_map[mid]}\n"
 
         await context.bot.send_message(chat_id=GROUP_CHAT_ID, text=text)
@@ -371,8 +328,6 @@ def main():
     app.add_handler(CommandHandler("week", week))
     app.add_handler(CommandHandler("nextweek", nextweek))
     app.add_handler(CommandHandler("rotation", rotation))
-    app.add_handler(CommandHandler("swap_tokens", swap_tokens))
-    app.add_handler(CommandHandler("swap_paws", swap_paws))
     app.add_handler(CommandHandler("hold", hold))
     app.add_handler(CommandHandler("holdlist", holdlist))
     app.add_handler(CommandHandler("mute", mute))
@@ -381,7 +336,7 @@ def main():
     if GROUP_CHAT_ID:
         app.job_queue.run_daily(
             monday_post,
-            time=time(hour=12, minute=0),
+            time=time(hour=12, minute=0),  # 5:30 PM IST
             days=(0,)
         )
 
