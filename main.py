@@ -94,6 +94,13 @@ def week_range(offset=0):
     return start.strftime("%b %d"),end.strftime("%b %d")
 
 
+def friday_date(offset=0):
+    today=datetime.utcnow()
+    monday=today-timedelta(days=today.weekday())
+    friday=monday+timedelta(days=4)+timedelta(weeks=offset)
+    return friday.strftime("%b %d"),friday.strftime("%d %b")
+
+
 def schedule():
 
     tokens_full=tokens_queue()
@@ -172,30 +179,30 @@ async def rotation(update:Update,context:ContextTypes.DEFAULT_TYPE):
     msg="📊 *ROTATION / РОТАЦИЯ*\n━━━━━━━━━━━━━━━━\n\n"
 
     msg+=f"📅 *Current Week / Текущая неделя*\n{s1} – {e1}\n\n"
-    msg+=format_block(TOKENS_LABEL,t1,names)
+    msg+=format_block(f"🎟 {TOKENS_LABEL}",t1,names)
     msg+="······························\n\n"
-    msg+=format_block(PAWS_LABEL,p1,names)
+    msg+=format_block(f"🐾 {PAWS_LABEL}",p1,names)
 
     msg+="━━━━━━━━━━━━━━━━\n\n"
 
     msg+=f"📅 *Next Week / Следующая неделя*\n{s2} – {e2}\n\n"
-    msg+=format_block(TOKENS_LABEL,t2,names)
+    msg+=format_block(f"🎟 {TOKENS_LABEL}",t2,names)
     msg+="······························\n\n"
-    msg+=format_block(PAWS_LABEL,p2,names)
+    msg+=format_block(f"🐾 {PAWS_LABEL}",p2,names)
 
     msg+="━━━━━━━━━━━━━━━━\n\n"
 
     msg+=f"📅 *Week 3 / Неделя 3*\n{s3} – {e3}\n\n"
-    msg+=format_block(TOKENS_LABEL,t3,names)
+    msg+=format_block(f"🎟 {TOKENS_LABEL}",t3,names)
     msg+="······························\n\n"
-    msg+=format_block(PAWS_LABEL,p3,names)
+    msg+=format_block(f"🐾 {PAWS_LABEL}",p3,names)
 
     msg+="━━━━━━━━━━━━━━━━\n\n"
 
     msg+="📦 *Reserve / Резерв*\n\n"
-    msg+=format_block(TOKENS_LABEL,rt,names)
+    msg+=format_block(f"🎟 {TOKENS_LABEL}",rt,names)
     msg+="······························\n\n"
-    msg+=format_block(PAWS_LABEL,rp,names)
+    msg+=format_block(f"🐾 {PAWS_LABEL}",rp,names)
 
     msg+=RESET_TEXT
 
@@ -209,14 +216,19 @@ async def week(update:Update,context:ContextTypes.DEFAULT_TYPE):
     names=member_map()
 
     s,e=week_range(0)
+    f_en,f_ru=friday_date(0)
 
     msg=f"📅 *CURRENT WEEK / ТЕКУЩАЯ НЕДЕЛЯ*\n{s} – {e}\n━━━━━━━━━━━━━━━━\n\n"
 
-    msg+=format_block(TOKENS_LABEL,t1,names)
-
+    msg+=format_block(f"🎟 {TOKENS_LABEL}",t1,names)
     msg+="······························\n\n"
+    msg+=format_block(f"🐾 {PAWS_LABEL}",p1,names)
 
-    msg+=format_block(PAWS_LABEL,p1,names)
+    msg+="━━━━━━━━━━━━━━━━\n"
+
+    msg+=f"{RESET_TEXT}\n\n"
+    msg+=f"If unclaimed till Friday ({f_en}) anyone can claim without penalty.\n"
+    msg+=f"Если не забрано до пятницы ({f_ru}), любой может забрать без штрафа."
 
     await update.message.reply_text(msg,parse_mode="Markdown")
 
@@ -231,11 +243,12 @@ async def nextweek(update:Update,context:ContextTypes.DEFAULT_TYPE):
 
     msg=f"📅 *NEXT WEEK / СЛЕДУЮЩАЯ НЕДЕЛЯ*\n{s} – {e}\n━━━━━━━━━━━━━━━━\n\n"
 
-    msg+=format_block(TOKENS_LABEL,t2,names)
-
+    msg+=format_block(f"🎟 {TOKENS_LABEL}",t2,names)
     msg+="······························\n\n"
+    msg+=format_block(f"🐾 {PAWS_LABEL}",p2,names)
 
-    msg+=format_block(PAWS_LABEL,p2,names)
+    msg+="━━━━━━━━━━━━━━━━\n"
+    msg+=RESET_TEXT
 
     await update.message.reply_text(msg,parse_mode="Markdown")
 
@@ -272,11 +285,11 @@ async def when(update:Update,context:ContextTypes.DEFAULT_TYPE):
     tp=tq.index(mid)+1 if mid in tq else "-"
     pp=pq.index(mid)+1 if mid in pq else "-"
 
-    msg=f"*PLAYER / ИГРОК*\n\n{name}\n\n"
+    msg=f"👤 *PLAYER / ИГРОК*\n\n{name}\n\n"
 
-    msg+=f"{TOKENS_LABEL}\nQueue position: {tp}\n{tw}\n{ts} – {te}\n\n"
+    msg+=f"🎟 {TOKENS_LABEL}\nQueue position: {tp}\n{tw}\n{ts} – {te}\n\n"
 
-    msg+=f"{PAWS_LABEL}\nQueue position: {pp}\n{pw}\n{ps} – {pe}"
+    msg+=f"🐾 {PAWS_LABEL}\nQueue position: {pp}\n{pw}\n{ps} – {pe}"
 
     await update.message.reply_text(msg,parse_mode="Markdown")
 
@@ -352,7 +365,7 @@ async def holdlist(update:Update,context:ContextTypes.DEFAULT_TYPE):
     ht=hold_tokens()
     hp=hold_paws()
 
-    msg="*HOLD LIST*\n\n"
+    msg="⏸ *HOLD LIST*\n\n"
 
     msg+="Tokens\n"
     for k in ht:
@@ -372,7 +385,7 @@ async def exportqueues(update:Update,context:ContextTypes.DEFAULT_TYPE):
 
     names=member_map()
 
-    msg="*QUEUE EXPORT*\n\n"
+    msg="📤 *QUEUE EXPORT*\n\n"
 
     msg+="TOKENS\n"
     for i,m in enumerate(tokens,1):
@@ -389,7 +402,7 @@ async def idlist(update:Update,context:ContextTypes.DEFAULT_TYPE):
 
     names=member_map()
 
-    msg="*CLAN IDS*\n\n"
+    msg="🆔 *CLAN IDS*\n\n"
 
     for mid in sorted(names):
         msg+=f"{mid} {names[mid]}\n"
