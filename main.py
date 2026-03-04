@@ -1,74 +1,82 @@
 import os
 import json
-from datetime import datetime, timedelta
-from telegram import Update, ChatPermissions
+from datetime import datetime
+from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
 TOKEN = os.getenv("TOKEN")
 
 GROUP_SIZE = 7
 
-# ---- FILES ----
-
 MEMBERS_FILE = "members.json"
-HOLD_FILE = "hold.json"
+TOKENS_FILE = "tokens_queue.json"
+PAWS_FILE = "paws_queue.json"
 
-# ---- QUEUES ----
+ADMIN_IDS = [1228141945]
 
-TOKENS_QUEUE = [
-1,2,3,4,5,6,7,8,9,10,11,12,
-13,14,15,16,17,18,19,20,21,22,23,24
-]
-
-PAWS_QUEUE = [
-1,2,3,4,5,6,7,8,9,10,11,12,
-13,14,15,16,17,18,19,20,21,22,23,24
-]
-
-# ---- HELPERS ----
-
-def load_members():
-    with open(MEMBERS_FILE) as f:
+def load_json(file):
+    with open(file) as f:
         return json.load(f)
 
+def save_json(file,data):
+    with open(file,"w") as f:
+        json.dump(data,f)
+
+def members():
+    return load_json(MEMBERS_FILE)
+
 def member_map():
-    return {m["id"]:m["name"] for m in load_members()}
+    return {m["id"]:m["name"] for m in members()}
+
+def tokens_queue():
+    return load_json(TOKENS_FILE)
+
+def paws_queue():
+    return load_json(PAWS_FILE)
+
+def save_tokens(q):
+    save_json(TOKENS_FILE,q)
+
+def save_paws(q):
+    save_json(PAWS_FILE,q)
+
+def is_admin(user_id):
+    return user_id in ADMIN_IDS
 
 def week_index(offset=0):
-    base = datetime(2026,1,5)
-    today = datetime.utcnow()
+    base=datetime(2026,1,5)
+    today=datetime.utcnow()
     return ((today-base).days//7)+offset
 
-def rotate(queue, offset):
-    start = (offset*GROUP_SIZE)%len(queue)
-    ordered = [queue[(start+i)%len(queue)] for i in range(len(queue))]
-    return ordered
-
-# ---- ENGINE ----
+def rotate(queue,offset):
+    start=(offset*GROUP_SIZE)%len(queue)
+    return [queue[(start+i)%len(queue)] for i in range(len(queue))]
 
 def calculate(offset=0):
 
-    w = week_index(offset)
+    w=week_index(offset)
 
-    tokens = rotate(TOKENS_QUEUE,w)
-    paws = rotate(PAWS_QUEUE,w)
+    tokens=rotate(tokens_queue(),w)
+    paws=rotate(paws_queue(),w)
 
-    tokens_this = tokens[:GROUP_SIZE]
-    tokens_next = tokens[GROUP_SIZE:GROUP_SIZE*2]
+    tokens_this=tokens[:GROUP_SIZE]
+    tokens_next=tokens[GROUP_SIZE:GROUP_SIZE*2]
 
-    paws_this = []
+    paws_this=[]
     for p in paws:
         if p not in tokens_this and len(paws_this)<GROUP_SIZE:
             paws_this.append(p)
 
-    paws_next = []
+    paws_next=[]
     for p in paws:
-        if p not in tokens_next and p not in paws_this and len(paws_next)<GROUP_SIZE:
+        if (
+            p not in tokens_next
+            and p not in paws_this
+            and len(paws_next)<GROUP_SIZE
+        ):
             paws_next.append(p)
 
     return tokens_this,paws_this,tokens_next,paws_next,tokens,paws
-
-# ---- COMMANDS ----
 
 async def week(update:Update,context:ContextTypes.DEFAULT_TYPE):
 
@@ -88,8 +96,6 @@ async def week(update:Update,context:ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(msg)
 
-# ---- NEXT WEEK ----
-
 async def nextweek(update:Update,context:ContextTypes.DEFAULT_TYPE):
 
     _,_,tokens,paws,_,_=calculate()
@@ -107,8 +113,6 @@ async def nextweek(update:Update,context:ContextTypes.DEFAULT_TYPE):
         msg+=names[i]+"\n"
 
     await update.message.reply_text(msg)
-
-# ---- ROTATION ----
 
 async def rotation(update:Update,context:ContextTypes.DEFAULT_TYPE):
 
@@ -150,61 +154,67 @@ async def rotation(update:Update,context:ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(msg)
 
-# ---- WHEN ----
+async def swaptoken(update:Update,context:ContextTypes.DEFAULT_TYPE):
+
+    if not is_admin(update.effective_user.id):
+        return
+
+    a=int(context.args[0])
+    b=int(context.args[1])
+
+    q=tokens_queue()
+
+    ia=q.index(a)
+    ib=q.index(b)
+
+    q[ia],q[ib]=q[ib],q[ia]
+
+    save_tokens(q)
+
+    await update.message.reply_text("Tokens swapped permanently")
+
+async def swappaw(update:Update,context:ContextTypes.DEFAULT_TYPE):
+
+    if not is_admin(update.effective_user.id):
+        return
+
+    a=int(context.args[0])
+    b=int(context.args[1])
+
+    q=paws_queue()
+
+    ia=q.index(a)
+    ib=q.index(b)
+
+    q[ia],q[ib]=q[ib],q[ia]
+
+    save_paws(q)
+
+    await update.message.reply_text("Paws swapped permanently")
 
 async def when(update:Update,context:ContextTypes.DEFAULT_TYPE):
 
-    if not context.args:
-        return
-
     mid=int(context.args[0])
+
+    tq=tokens_queue()
+    pq=paws_queue()
 
     w=week_index()
 
-    pos_t=TOKENS_QUEUE.index(mid)
-    pos_p=PAWS_QUEUE.index(mid)
+    pos_t=tq.index(mid)
+    pos_p=pq.index(mid)
 
-    start_t=(w*GROUP_SIZE)%len(TOKENS_QUEUE)
-    start_p=(w*GROUP_SIZE)%len(PAWS_QUEUE)
+    start_t=(w*GROUP_SIZE)%len(tq)
+    start_p=(w*GROUP_SIZE)%len(pq)
 
-    weeks_t=((pos_t-start_t)%len(TOKENS_QUEUE))//GROUP_SIZE
-    weeks_p=((pos_p-start_p)%len(PAWS_QUEUE))//GROUP_SIZE
+    weeks_t=((pos_t-start_t)%len(tq))//GROUP_SIZE
+    weeks_p=((pos_p-start_p)%len(pq))//GROUP_SIZE
 
     names=member_map()
 
     msg=f"{names[mid]}\n\nTokens in {weeks_t} week(s)\nPaws in {weeks_p} week(s)"
 
     await update.message.reply_text(msg)
-
-# ---- SWAP TOKENS ----
-
-async def swaptoken(update:Update,context:ContextTypes.DEFAULT_TYPE):
-
-    a=int(context.args[0])
-    b=int(context.args[1])
-
-    ia=TOKENS_QUEUE.index(a)
-    ib=TOKENS_QUEUE.index(b)
-
-    TOKENS_QUEUE[ia],TOKENS_QUEUE[ib]=TOKENS_QUEUE[ib],TOKENS_QUEUE[ia]
-
-    await update.message.reply_text("Tokens swapped")
-
-# ---- SWAP PAWS ----
-
-async def swappaw(update:Update,context:ContextTypes.DEFAULT_TYPE):
-
-    a=int(context.args[0])
-    b=int(context.args[1])
-
-    ia=PAWS_QUEUE.index(a)
-    ib=PAWS_QUEUE.index(b)
-
-    PAWS_QUEUE[ia],PAWS_QUEUE[ib]=PAWS_QUEUE[ib],PAWS_QUEUE[ia]
-
-    await update.message.reply_text("Paws swapped")
-
-# ---- MAIN ----
 
 def main():
 
