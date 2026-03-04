@@ -111,21 +111,16 @@ def clean_holds():
     ht = hold_tokens()
     hp = hold_paws()
 
-    changed = False
-
     for k, v in list(ht.items()):
         if datetime.fromisoformat(v).date() < today:
             del ht[k]
-            changed = True
 
     for k, v in list(hp.items()):
         if datetime.fromisoformat(v).date() < today:
             del hp[k]
-            changed = True
 
-    if changed:
-        save_hold_tokens(ht)
-        save_hold_paws(hp)
+    save_hold_tokens(ht)
+    save_hold_paws(hp)
 
 
 def apply_hold(queue, hold_dict):
@@ -273,107 +268,50 @@ async def rotation(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(msg)
 
 
-async def when(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-    mid = int(context.args[0])
-    names = member_map()
-
-    t1, p1, t2, p2, t3, p3, _, _ = calculate()
-
-    name = names[mid]
-
-    def check(mid, a, b, c):
-        if mid in a:
-            return "Current Week / Текущая неделя", week_range(0)
-        if mid in b:
-            return "Next Week / Следующая неделя", week_range(1)
-        if mid in c:
-            return "Week 3 / Неделя 3", week_range(2)
-        return "Later / Позже", ("", "")
-
-    t_label, t_range = check(mid, t1, t2, t3)
-    p_label, p_range = check(mid, p1, p2, p3)
-
-    msg = f"📌 PLAYER / ИГРОК\n\n{name}\n\n"
-
-    msg += f"🎟 {TOKENS_LABEL}\n{t_label}\n"
-    if t_range[0]:
-        msg += f"{t_range[0]} – {t_range[1]}\n"
-
-    msg += f"\n🐾 {PAWS_LABEL}\n{p_label}\n"
-    if p_range[0]:
-        msg += f"{p_range[0]} – {p_range[1]}"
-
-    await update.message.reply_text(msg)
-
-
-async def holdT(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def swaptoken(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not is_admin(update.effective_user.id):
         return
 
-    mid = context.args[0]
+    a = int(context.args[0])
+    b = int(context.args[1])
 
-    holds = hold_tokens()
+    q = tokens_queue()
 
-    expiry = datetime.utcnow() + timedelta(days=30)
+    ia = q.index(a)
+    ib = q.index(b)
 
-    if mid in holds:
-        expiry = datetime.fromisoformat(holds[mid]) + timedelta(days=30)
+    q[ia], q[ib] = q[ib], q[ia]
 
-    holds[mid] = expiry.isoformat()
+    save_tokens(q)
 
-    save_hold_tokens(holds)
-
-    await update.message.reply_text("Hold added / Пауза добавлена")
+    await update.message.reply_text("Tokens swapped / Токены поменяны")
 
 
-async def holdP(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def swappaw(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not is_admin(update.effective_user.id):
         return
 
-    mid = context.args[0]
+    a = int(context.args[0])
+    b = int(context.args[1])
 
-    holds = hold_paws()
+    q = paws_queue()
 
-    expiry = datetime.utcnow() + timedelta(days=30)
+    ia = q.index(a)
+    ib = q.index(b)
 
-    if mid in holds:
-        expiry = datetime.fromisoformat(holds[mid]) + timedelta(days=30)
+    q[ia], q[ib] = q[ib], q[ia]
 
-    holds[mid] = expiry.isoformat()
+    save_paws(q)
 
-    save_hold_paws(holds)
-
-    await update.message.reply_text("Hold added / Пауза добавлена")
-
-
-async def holdlist(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-    names = member_map()
-
-    ht = hold_tokens()
-    hp = hold_paws()
-
-    msg = "⏸ HOLD LIST / СПИСОК ПАУЗЫ\n━━━━━━━━━━━━━━━━\n\n"
-
-    msg += f"🎟 {TOKENS_LABEL}\n"
-    for k, v in ht.items():
-        msg += f"{names[int(k)]} — {v[:10]}\n"
-
-    msg += f"\n🐾 {PAWS_LABEL}\n"
-    for k, v in hp.items():
-        msg += f"{names[int(k)]} — {v[:10]}\n"
-
-    await update.message.reply_text(msg)
+    await update.message.reply_text("Paws swapped / Лапы поменяны")
 
 
 async def exportqueues(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     tokens = tokens_queue()
     paws = paws_queue()
-
     names = member_map()
 
     msg = "QUEUE EXPORT / ЭКСПОРТ ОЧЕРЕДИ\n\n"
@@ -408,15 +346,10 @@ def main():
     app.add_handler(CommandHandler("week", week))
     app.add_handler(CommandHandler("nextweek", nextweek))
     app.add_handler(CommandHandler("rotation", rotation))
-    app.add_handler(CommandHandler("when", when))
-
-    app.add_handler(CommandHandler("ID", idlist))
-
-    app.add_handler(CommandHandler("holdT", holdT))
-    app.add_handler(CommandHandler("holdP", holdP))
-    app.add_handler(CommandHandler("holdlist", holdlist))
-
+    app.add_handler(CommandHandler("swaptoken", swaptoken))
+    app.add_handler(CommandHandler("swappaw", swappaw))
     app.add_handler(CommandHandler("exportqueues", exportqueues))
+    app.add_handler(CommandHandler("ID", idlist))
 
     app.run_polling()
 
