@@ -106,6 +106,7 @@ def friday_date(offset=0):
 
 
 def clean_holds():
+
     today = datetime.utcnow().date()
 
     ht = hold_tokens()
@@ -123,48 +124,45 @@ def clean_holds():
     save_hold_paws(hp)
 
 
-def apply_hold(queue, hold_dict):
-    return [p for p in queue if str(p) not in hold_dict]
-
-
 def calculate():
 
     clean_holds()
 
-    tokens = tokens_queue()
-    paws = paws_queue()
+    tokens_full = tokens_queue()
+    paws_full = paws_queue()
 
     ht = hold_tokens()
     hp = hold_paws()
 
-    tokens = apply_hold(tokens, ht)
-    paws = apply_hold(paws, hp)
+    tokens_active = [p for p in tokens_full if str(p) not in ht]
+    paws_active = [p for p in paws_full if str(p) not in hp]
 
     w = week_index()
 
-    tokens = rotate(tokens, w)
-    paws = rotate(paws, w)
+    tokens_active = rotate(tokens_active, w)
+    paws_active = rotate(paws_active, w)
 
-    t1 = tokens[:GROUP_SIZE]
-    t2 = tokens[GROUP_SIZE:GROUP_SIZE * 2]
-    t3 = tokens[GROUP_SIZE * 2:GROUP_SIZE * 3]
+    t1 = tokens_active[:GROUP_SIZE]
+    t2 = tokens_active[GROUP_SIZE:GROUP_SIZE*2]
+    t3 = tokens_active[GROUP_SIZE*2:GROUP_SIZE*3]
 
-    p1 = []
-    for p in paws:
-        if p not in t1 and len(p1) < GROUP_SIZE:
+    p1, p2, p3 = [], [], []
+
+    for p in paws_active:
+
+        if len(p1) < GROUP_SIZE and p not in t1:
             p1.append(p)
+            continue
 
-    p2 = []
-    for p in paws:
-        if p not in t2 and p not in p1 and len(p2) < GROUP_SIZE:
+        if len(p2) < GROUP_SIZE and p not in t2:
             p2.append(p)
+            continue
 
-    p3 = []
-    for p in paws:
-        if p not in t3 and p not in p1 and p not in p2 and len(p3) < GROUP_SIZE:
+        if len(p3) < GROUP_SIZE and p not in t3:
             p3.append(p)
+            continue
 
-    return t1, p1, t2, p2, t3, p3, tokens, paws
+    return t1, p1, t2, p2, t3, p3, tokens_full, paws_full
 
 
 async def week(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -186,7 +184,6 @@ async def week(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg += f"• {names[i]}\n"
 
     msg += f"\n━━━━━━━━━━━━━━━━\n{RESET_TEXT}\n\n"
-
     msg += f"If unclaimed till Friday ({f_en}) anyone can claim without penalty.\n"
     msg += f"Если не забрано до пятницы ({f_ru}), любой может забрать без штрафа."
 
@@ -215,8 +212,11 @@ async def nextweek(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def rotation(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-    t1, p1, t2, p2, t3, p3, tokens, paws = calculate()
+    t1, p1, t2, p2, t3, p3, tokens_full, paws_full = calculate()
     names = member_map()
+
+    ht = hold_tokens()
+    hp = hold_paws()
 
     s1, e1 = week_range(0)
     s2, e2 = week_range(1)
@@ -258,10 +258,33 @@ async def rotation(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for i in p3:
         msg += f"• {names[i]}\n"
 
-    msg += "\n━━━━━━━━━━━━━━━━\n📦 Reserve / Резерв\n"
+    msg += "\n━━━━━━━━━━━━━━━━\n📦 Reserve / Резерв\n\n"
 
-    for i in tokens[GROUP_SIZE * 3:]:
-        msg += f"• {names[i]}\n"
+    msg += f"🎟 {TOKENS_LABEL}\n"
+
+    reserve_tokens = [p for p in tokens_full if p not in t1 and p not in t2 and p not in t3]
+
+    for i in reserve_tokens:
+        if str(i) not in ht:
+            msg += f"• {names[i]}\n"
+
+    if ht:
+        msg += "\n⏸ HOLD\n"
+        for k in ht:
+            msg += f"• {names[int(k)]}\n"
+
+    msg += f"\n🐾 {PAWS_LABEL}\n"
+
+    reserve_paws = [p for p in paws_full if p not in p1 and p not in p2 and p not in p3]
+
+    for i in reserve_paws:
+        if str(i) not in hp:
+            msg += f"• {names[i]}\n"
+
+    if hp:
+        msg += "\n⏸ HOLD\n"
+        for k in hp:
+            msg += f"• {names[int(k)]}\n"
 
     msg += f"\n{RESET_TEXT}"
 
@@ -285,7 +308,7 @@ async def swaptoken(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     save_tokens(q)
 
-    await update.message.reply_text("Tokens swapped / Токены поменяны")
+    await update.message.reply_text("Tokens swapped")
 
 
 async def swappaw(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -305,38 +328,7 @@ async def swappaw(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     save_paws(q)
 
-    await update.message.reply_text("Paws swapped / Лапы поменяны")
-
-
-async def exportqueues(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-    tokens = tokens_queue()
-    paws = paws_queue()
-    names = member_map()
-
-    msg = "QUEUE EXPORT / ЭКСПОРТ ОЧЕРЕДИ\n\n"
-
-    msg += f"{TOKENS_LABEL}\n"
-    for i, m in enumerate(tokens, 1):
-        msg += f"{i}. {names[m]}\n"
-
-    msg += f"\n{PAWS_LABEL}\n"
-    for i, m in enumerate(paws, 1):
-        msg += f"{i}. {names[m]}\n"
-
-    await update.message.reply_text(msg)
-
-
-async def idlist(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-    names = member_map()
-
-    msg = "CLAN IDS / ID ИГРОКОВ\n\n"
-
-    for mid in sorted(names):
-        msg += f"{mid}  {names[mid]}\n"
-
-    await update.message.reply_text(msg)
+    await update.message.reply_text("Paws swapped")
 
 
 async def holdT(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -357,7 +349,7 @@ async def holdT(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     save_hold_tokens(holds)
 
-    await update.message.reply_text("Token hold added / Пауза токенов добавлена")
+    await update.message.reply_text("Token hold added")
 
 
 async def holdP(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -378,7 +370,7 @@ async def holdP(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     save_hold_paws(holds)
 
-    await update.message.reply_text("Paws hold added / Пауза лап добавлена")
+    await update.message.reply_text("Paws hold added")
 
 
 async def holdlist(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -388,23 +380,15 @@ async def holdlist(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ht = hold_tokens()
     hp = hold_paws()
 
-    msg = "⏸ HOLD LIST / СПИСОК ПАУЗЫ\n━━━━━━━━━━━━━━━━\n\n"
+    msg = "⏸ HOLD LIST\n\n"
 
-    msg += f"🎟 {TOKENS_LABEL}\n"
+    msg += "Tokens\n"
+    for k, v in ht.items():
+        msg += f"{names[int(k)]} — {v[:10]}\n"
 
-    if ht:
-        for k, v in ht.items():
-            msg += f"{names[int(k)]} — {v[:10]}\n"
-    else:
-        msg += "None\n"
-
-    msg += f"\n🐾 {PAWS_LABEL}\n"
-
-    if hp:
-        for k, v in hp.items():
-            msg += f"{names[int(k)]} — {v[:10]}\n"
-    else:
-        msg += "None\n"
+    msg += "\nPaws\n"
+    for k, v in hp.items():
+        msg += f"{names[int(k)]} — {v[:10]}\n"
 
     await update.message.reply_text(msg)
 
@@ -428,7 +412,39 @@ async def unhold(update: Update, context: ContextTypes.DEFAULT_TYPE):
     save_hold_tokens(ht)
     save_hold_paws(hp)
 
-    await update.message.reply_text("Hold removed / Пауза снята")
+    await update.message.reply_text("Hold removed")
+
+
+async def exportqueues(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    tokens = tokens_queue()
+    paws = paws_queue()
+
+    names = member_map()
+
+    msg = "QUEUE EXPORT\n\n"
+
+    msg += "TOKENS\n"
+    for i, m in enumerate(tokens, 1):
+        msg += f"{i}. {names[m]}\n"
+
+    msg += "\nPAWS\n"
+    for i, m in enumerate(paws, 1):
+        msg += f"{i}. {names[m]}\n"
+
+    await update.message.reply_text(msg)
+
+
+async def idlist(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    names = member_map()
+
+    msg = "CLAN IDS\n\n"
+
+    for mid in sorted(names):
+        msg += f"{mid}  {names[mid]}\n"
+
+    await update.message.reply_text(msg)
 
 
 def main():
@@ -438,12 +454,15 @@ def main():
     app.add_handler(CommandHandler("week", week))
     app.add_handler(CommandHandler("nextweek", nextweek))
     app.add_handler(CommandHandler("rotation", rotation))
+
     app.add_handler(CommandHandler("swaptoken", swaptoken))
     app.add_handler(CommandHandler("swappaw", swappaw))
+
     app.add_handler(CommandHandler("holdT", holdT))
     app.add_handler(CommandHandler("holdP", holdP))
     app.add_handler(CommandHandler("holdlist", holdlist))
     app.add_handler(CommandHandler("unhold", unhold))
+
     app.add_handler(CommandHandler("exportqueues", exportqueues))
     app.add_handler(CommandHandler("ID", idlist))
 
