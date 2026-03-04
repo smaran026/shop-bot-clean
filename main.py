@@ -348,6 +348,9 @@ def main():
     app.add_handler(CommandHandler("rotation", rotation))
     app.add_handler(CommandHandler("swaptoken", swaptoken))
     app.add_handler(CommandHandler("swappaw", swappaw))
+    app.add_handler(CommandHandler("holdT", holdT))
+    app.add_handler(CommandHandler("holdP", holdP))
+    app.add_handler(CommandHandler("holdlist", holdlist))
     app.add_handler(CommandHandler("exportqueues", exportqueues))
     app.add_handler(CommandHandler("ID", idlist))
 
