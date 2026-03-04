@@ -192,27 +192,47 @@ async def swappaw(update:Update,context:ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text("Paws swapped permanently")
 
-async def when(update:Update,context:ContextTypes.DEFAULT_TYPE):
+async def when(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-    mid=int(context.args[0])
+    mid = int(context.args[0])
 
-    tq=tokens_queue()
-    pq=paws_queue()
+    tokens_this, paws_this, tokens_next, paws_next, tokens, paws = calculate()
 
-    w=week_index()
+    names = member_map()
 
-    pos_t=tq.index(mid)
-    pos_p=pq.index(mid)
+    name = names[mid]
 
-    start_t=(w*GROUP_SIZE)%len(tq)
-    start_p=(w*GROUP_SIZE)%len(pq)
+    # TOKENS
+    if mid in tokens_this:
+        token_msg = "This week"
+    elif mid in tokens_next:
+        token_msg = "Next week"
+    else:
+        tq = tokens_queue()
+        w = week_index()
 
-    weeks_t=((pos_t-start_t)%len(tq))//GROUP_SIZE
-    weeks_p=((pos_p-start_p)%len(pq))//GROUP_SIZE
+        pos = tq.index(mid)
+        start = (w * GROUP_SIZE) % len(tq)
 
-    names=member_map()
+        weeks = ((pos - start) % len(tq)) // GROUP_SIZE
+        token_msg = f"In {weeks} week(s)"
 
-    msg=f"{names[mid]}\n\nTokens in {weeks_t} week(s)\nPaws in {weeks_p} week(s)"
+    # PAWS
+    if mid in paws_this:
+        paws_msg = "This week"
+    elif mid in paws_next:
+        paws_msg = "Next week"
+    else:
+        pq = paws_queue()
+        w = week_index()
+
+        pos = pq.index(mid)
+        start = (w * GROUP_SIZE) % len(pq)
+
+        weeks = ((pos - start) % len(pq)) // GROUP_SIZE
+        paws_msg = f"In {weeks} week(s)"
+
+    msg = f"{name}\n\nTokens: {token_msg}\nPaws: {paws_msg}"
 
     await update.message.reply_text(msg)
 
