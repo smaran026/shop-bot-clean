@@ -303,6 +303,66 @@ async def unmute(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text("User unmuted.")
 
+async def swap_tokens(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update):
+        return
+
+    if len(context.args) != 2:
+        await update.message.reply_text("Usage: /swap_tokens ID1 ID2")
+        return
+
+    if not context.args[0].isdigit() or not context.args[1].isdigit():
+        await update.message.reply_text("IDs must be numbers.")
+        return
+
+    a = int(context.args[0])
+    b = int(context.args[1])
+
+    queue = load_json(TOKENS_QUEUE_FILE, [])
+
+    if a not in queue or b not in queue:
+        await update.message.reply_text("One of the IDs is not in Tokens queue.")
+        return
+
+    ia = queue.index(a)
+    ib = queue.index(b)
+
+    queue[ia], queue[ib] = queue[ib], queue[ia]
+
+    save_json(TOKENS_QUEUE_FILE, queue)
+
+    await update.message.reply_text(f"Tokens swap complete: {a} ↔ {b}")
+
+async def swap_paws(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update):
+        return
+
+    if len(context.args) != 2:
+        await update.message.reply_text("Usage: /swap_paws ID1 ID2")
+        return
+
+    if not context.args[0].isdigit() or not context.args[1].isdigit():
+        await update.message.reply_text("IDs must be numbers.")
+        return
+
+    a = int(context.args[0])
+    b = int(context.args[1])
+
+    queue = load_json(PAWS_QUEUE_FILE, [])
+
+    if a not in queue or b not in queue:
+        await update.message.reply_text("One of the IDs is not in Paws queue.")
+        return
+
+    ia = queue.index(a)
+    ib = queue.index(b)
+
+    queue[ia], queue[ib] = queue[ib], queue[ia]
+
+    save_json(PAWS_QUEUE_FILE, queue)
+
+    await update.message.reply_text(f"Paws swap complete: {a} ↔ {b}")
+
 
 # ---------------- MONDAY AUTO POST ----------------
 
@@ -332,6 +392,8 @@ def main():
     app.add_handler(CommandHandler("holdlist", holdlist))
     app.add_handler(CommandHandler("mute", mute))
     app.add_handler(CommandHandler("unmute", unmute))
+    app.add_handler(CommandHandler("swap_tokens", swap_tokens))
+    app.add_handler(CommandHandler("swap_paws", swap_paws))
 
     if GROUP_CHAT_ID:
         app.job_queue.run_daily(
