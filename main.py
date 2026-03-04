@@ -124,6 +124,21 @@ def clean_holds():
     save_hold_paws(hp)
 
 
+def fill_week(paws_queue, tokens_week):
+
+    week = []
+
+    for p in paws_queue:
+
+        if p not in tokens_week and p not in week:
+            week.append(p)
+
+        if len(week) == GROUP_SIZE:
+            break
+
+    return week
+
+
 def calculate():
 
     clean_holds()
@@ -143,71 +158,21 @@ def calculate():
     paws_active = rotate(paws_active, w)
 
     t1 = tokens_active[:GROUP_SIZE]
-    t2 = tokens_active[GROUP_SIZE:GROUP_SIZE*2]
-    t3 = tokens_active[GROUP_SIZE*2:GROUP_SIZE*3]
+    t2 = tokens_active[GROUP_SIZE:GROUP_SIZE * 2]
+    t3 = tokens_active[GROUP_SIZE * 2:GROUP_SIZE * 3]
 
-    p1, p2, p3 = [], [], []
-
-    for p in paws_active:
-
-        if len(p1) < GROUP_SIZE and p not in t1:
-            p1.append(p)
-            continue
-
-        if len(p2) < GROUP_SIZE and p not in t2:
-            p2.append(p)
-            continue
-
-        if len(p3) < GROUP_SIZE and p not in t3:
-            p3.append(p)
-            continue
+    p1 = fill_week(paws_active, t1)
+    p2 = fill_week(paws_active, t2)
+    p3 = fill_week(paws_active, t3)
 
     return t1, p1, t2, p2, t3, p3, tokens_full, paws_full
 
 
-async def week(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-    t1, p1, _, _, _, _, _, _ = calculate()
-    names = member_map()
-
-    s, e = week_range(0)
-    f_en, f_ru = friday_date(0)
-
-    msg = f"📅 CURRENT WEEK / ТЕКУЩАЯ НЕДЕЛЯ\n{s} – {e}\n━━━━━━━━━━━━━━━━\n\n"
-
-    msg += f"🎟 {TOKENS_LABEL}\n"
-    for i in t1:
-        msg += f"• {names[i]}\n"
-
-    msg += f"\n🐾 {PAWS_LABEL}\n"
-    for i in p1:
-        msg += f"• {names[i]}\n"
-
-    msg += f"\n━━━━━━━━━━━━━━━━\n{RESET_TEXT}\n\n"
-    msg += f"If unclaimed till Friday ({f_en}) anyone can claim without penalty.\n"
-    msg += f"Если не забрано до пятницы ({f_ru}), любой может забрать без штрафа."
-
-    await update.message.reply_text(msg)
-
-
-async def nextweek(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-    _, _, t2, p2, _, _, _, _ = calculate()
-    names = member_map()
-
-    s, e = week_range(1)
-
-    msg = f"📅 NEXT WEEK / СЛЕДУЮЩАЯ НЕДЕЛЯ\n{s} – {e}\n━━━━━━━━━━━━━━━━\n\n"
-
-    msg += f"🎟 {TOKENS_LABEL}\n"
-    for i in t2:
-        msg += f"• {names[i]}\n"
-
-    msg += f"\n🐾 {PAWS_LABEL}\n"
-    for i in p2:
-        msg += f"• {names[i]}\n"
-
-    await update.message.reply_text(msg)
+def section(title, players, names):
+    text = f"**{title}**\n\n"
+    for p in players:
+        text += f"• {names[p]}\n"
+    return text + "\n"
 
 
 async def rotation(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -222,73 +187,106 @@ async def rotation(update: Update, context: ContextTypes.DEFAULT_TYPE):
     s2, e2 = week_range(1)
     s3, e3 = week_range(2)
 
-    msg = "📊 ROTATION / РОТАЦИЯ\n━━━━━━━━━━━━━━━━\n\n"
+    msg = "📊 **ROTATION / РОТАЦИЯ**\n━━━━━━━━━━━━━━━━\n\n"
 
-    msg += f"📅 Current Week / Текущая неделя\n{s1} – {e1}\n\n"
+    msg += f"📅 **Current Week / Текущая неделя**\n{s1} – {e1}\n\n"
 
-    msg += f"🎟 {TOKENS_LABEL}\n"
-    for i in t1:
-        msg += f"• {names[i]}\n"
+    msg += section(TOKENS_LABEL, t1, names)
 
-    msg += f"\n🐾 {PAWS_LABEL}\n"
-    for i in p1:
-        msg += f"• {names[i]}\n"
+    msg += "······························\n\n"
 
-    msg += "\n━━━━━━━━━━━━━━━━\n"
+    msg += section(PAWS_LABEL, p1, names)
 
-    msg += f"📅 Next Week / Следующая неделя\n{s2} – {e2}\n\n"
+    msg += "━━━━━━━━━━━━━━━━\n\n"
 
-    msg += f"🎟 {TOKENS_LABEL}\n"
-    for i in t2:
-        msg += f"• {names[i]}\n"
+    msg += f"📅 **Next Week / Следующая неделя**\n{s2} – {e2}\n\n"
 
-    msg += f"\n🐾 {PAWS_LABEL}\n"
-    for i in p2:
-        msg += f"• {names[i]}\n"
+    msg += section(TOKENS_LABEL, t2, names)
 
-    msg += "\n━━━━━━━━━━━━━━━━\n"
+    msg += "······························\n\n"
 
-    msg += f"📅 Week 3 / Неделя 3\n{s3} – {e3}\n\n"
+    msg += section(PAWS_LABEL, p2, names)
 
-    msg += f"🎟 {TOKENS_LABEL}\n"
-    for i in t3:
-        msg += f"• {names[i]}\n"
+    msg += "━━━━━━━━━━━━━━━━\n\n"
 
-    msg += f"\n🐾 {PAWS_LABEL}\n"
-    for i in p3:
-        msg += f"• {names[i]}\n"
+    msg += f"📅 **Week 3 / Неделя 3**\n{s3} – {e3}\n\n"
 
-    msg += "\n━━━━━━━━━━━━━━━━\n📦 Reserve / Резерв\n\n"
+    msg += section(TOKENS_LABEL, t3, names)
 
-    msg += f"🎟 {TOKENS_LABEL}\n"
+    msg += "······························\n\n"
 
-    reserve_tokens = [p for p in tokens_full if p not in t1 and p not in t2 and p not in t3]
+    msg += section(PAWS_LABEL, p3, names)
 
-    for i in reserve_tokens:
-        if str(i) not in ht:
-            msg += f"• {names[i]}\n"
+    msg += "━━━━━━━━━━━━━━━━\n\n"
+
+    msg += "📦 **Reserve / Резерв**\n\n"
+
+    reserve_tokens = [p for p in tokens_full if p not in t1+t2+t3]
+
+    msg += section(TOKENS_LABEL, reserve_tokens, names)
 
     if ht:
-        msg += "\n⏸ HOLD\n"
+        msg += "**⏸ HOLD**\n"
         for k in ht:
             msg += f"• {names[int(k)]}\n"
+        msg += "\n"
 
-    msg += f"\n🐾 {PAWS_LABEL}\n"
+    msg += "······························\n\n"
 
-    reserve_paws = [p for p in paws_full if p not in p1 and p not in p2 and p not in p3]
+    reserve_paws = [p for p in paws_full if p not in p1+p2+p3]
 
-    for i in reserve_paws:
-        if str(i) not in hp:
-            msg += f"• {names[i]}\n"
+    msg += section(PAWS_LABEL, reserve_paws, names)
 
     if hp:
-        msg += "\n⏸ HOLD\n"
+        msg += "**⏸ HOLD**\n"
         for k in hp:
             msg += f"• {names[int(k)]}\n"
 
     msg += f"\n{RESET_TEXT}"
 
-    await update.message.reply_text(msg)
+    await update.message.reply_text(msg, parse_mode="Markdown")
+
+
+async def week(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    t1, p1, _, _, _, _, _, _ = calculate()
+    names = member_map()
+
+    s, e = week_range(0)
+    f_en, f_ru = friday_date(0)
+
+    msg = f"📅 **CURRENT WEEK / ТЕКУЩАЯ НЕДЕЛЯ**\n{s} – {e}\n━━━━━━━━━━━━━━━━\n\n"
+
+    msg += section(TOKENS_LABEL, t1, names)
+
+    msg += "······························\n\n"
+
+    msg += section(PAWS_LABEL, p1, names)
+
+    msg += f"━━━━━━━━━━━━━━━━\n{RESET_TEXT}\n\n"
+
+    msg += f"If unclaimed till Friday ({f_en}) anyone can claim without penalty.\n"
+    msg += f"Если не забрано до пятницы ({f_ru}), любой может забрать без штрафа."
+
+    await update.message.reply_text(msg, parse_mode="Markdown")
+
+
+async def nextweek(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    _, _, t2, p2, _, _, _, _ = calculate()
+    names = member_map()
+
+    s, e = week_range(1)
+
+    msg = f"📅 **NEXT WEEK / СЛЕДУЮЩАЯ НЕДЕЛЯ**\n{s} – {e}\n━━━━━━━━━━━━━━━━\n\n"
+
+    msg += section(TOKENS_LABEL, t2, names)
+
+    msg += "······························\n\n"
+
+    msg += section(PAWS_LABEL, p2, names)
+
+    await update.message.reply_text(msg, parse_mode="Markdown")
 
 
 async def swaptoken(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -333,11 +331,7 @@ async def swappaw(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def holdT(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-    if not is_admin(update.effective_user.id):
-        return
-
     mid = context.args[0]
-
     holds = hold_tokens()
 
     expiry = datetime.utcnow() + timedelta(days=30)
@@ -354,11 +348,7 @@ async def holdT(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def holdP(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-    if not is_admin(update.effective_user.id):
-        return
-
     mid = context.args[0]
-
     holds = hold_paws()
 
     expiry = datetime.utcnow() + timedelta(days=30)
@@ -380,7 +370,7 @@ async def holdlist(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ht = hold_tokens()
     hp = hold_paws()
 
-    msg = "⏸ HOLD LIST\n\n"
+    msg = "**HOLD LIST**\n\n"
 
     msg += "Tokens\n"
     for k, v in ht.items():
@@ -390,29 +380,7 @@ async def holdlist(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for k, v in hp.items():
         msg += f"{names[int(k)]} — {v[:10]}\n"
 
-    await update.message.reply_text(msg)
-
-
-async def unhold(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-    if not is_admin(update.effective_user.id):
-        return
-
-    mid = context.args[0]
-
-    ht = hold_tokens()
-    hp = hold_paws()
-
-    if mid in ht:
-        del ht[mid]
-
-    if mid in hp:
-        del hp[mid]
-
-    save_hold_tokens(ht)
-    save_hold_paws(hp)
-
-    await update.message.reply_text("Hold removed")
+    await update.message.reply_text(msg, parse_mode="Markdown")
 
 
 async def exportqueues(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -422,7 +390,7 @@ async def exportqueues(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     names = member_map()
 
-    msg = "QUEUE EXPORT\n\n"
+    msg = "**QUEUE EXPORT**\n\n"
 
     msg += "TOKENS\n"
     for i, m in enumerate(tokens, 1):
@@ -432,19 +400,7 @@ async def exportqueues(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for i, m in enumerate(paws, 1):
         msg += f"{i}. {names[m]}\n"
 
-    await update.message.reply_text(msg)
-
-
-async def idlist(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-    names = member_map()
-
-    msg = "CLAN IDS\n\n"
-
-    for mid in sorted(names):
-        msg += f"{mid}  {names[mid]}\n"
-
-    await update.message.reply_text(msg)
+    await update.message.reply_text(msg, parse_mode="Markdown")
 
 
 def main():
@@ -461,10 +417,8 @@ def main():
     app.add_handler(CommandHandler("holdT", holdT))
     app.add_handler(CommandHandler("holdP", holdP))
     app.add_handler(CommandHandler("holdlist", holdlist))
-    app.add_handler(CommandHandler("unhold", unhold))
 
     app.add_handler(CommandHandler("exportqueues", exportqueues))
-    app.add_handler(CommandHandler("ID", idlist))
 
     app.run_polling()
 
