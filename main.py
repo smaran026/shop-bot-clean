@@ -149,10 +149,10 @@ async def rotation(update:Update,context:ContextTypes.DEFAULT_TYPE):
 
     msg+="\nReserve\n"
 
-reserve_paws = [p for p in paws if p not in paws_this and p not in paws_next]
+    reserve_paws = [p for p in paws if p not in paws_this and p not in paws_next]
 
-for i in reserve_paws:
-    msg+=f"{i}. {names[i]}\n"
+    for i in reserve_paws:
+        msg+=f"{i}. {names[i]}\n"
 
     await update.message.reply_text(msg)
 
