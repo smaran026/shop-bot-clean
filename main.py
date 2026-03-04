@@ -339,6 +339,98 @@ async def idlist(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(msg)
 
 
+async def holdT(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    if not is_admin(update.effective_user.id):
+        return
+
+    mid = context.args[0]
+
+    holds = hold_tokens()
+
+    expiry = datetime.utcnow() + timedelta(days=30)
+
+    if mid in holds:
+        expiry = datetime.fromisoformat(holds[mid]) + timedelta(days=30)
+
+    holds[mid] = expiry.isoformat()
+
+    save_hold_tokens(holds)
+
+    await update.message.reply_text("Token hold added / Пауза токенов добавлена")
+
+
+async def holdP(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    if not is_admin(update.effective_user.id):
+        return
+
+    mid = context.args[0]
+
+    holds = hold_paws()
+
+    expiry = datetime.utcnow() + timedelta(days=30)
+
+    if mid in holds:
+        expiry = datetime.fromisoformat(holds[mid]) + timedelta(days=30)
+
+    holds[mid] = expiry.isoformat()
+
+    save_hold_paws(holds)
+
+    await update.message.reply_text("Paws hold added / Пауза лап добавлена")
+
+
+async def holdlist(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    names = member_map()
+
+    ht = hold_tokens()
+    hp = hold_paws()
+
+    msg = "⏸ HOLD LIST / СПИСОК ПАУЗЫ\n━━━━━━━━━━━━━━━━\n\n"
+
+    msg += f"🎟 {TOKENS_LABEL}\n"
+
+    if ht:
+        for k, v in ht.items():
+            msg += f"{names[int(k)]} — {v[:10]}\n"
+    else:
+        msg += "None\n"
+
+    msg += f"\n🐾 {PAWS_LABEL}\n"
+
+    if hp:
+        for k, v in hp.items():
+            msg += f"{names[int(k)]} — {v[:10]}\n"
+    else:
+        msg += "None\n"
+
+    await update.message.reply_text(msg)
+
+
+async def unhold(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    if not is_admin(update.effective_user.id):
+        return
+
+    mid = context.args[0]
+
+    ht = hold_tokens()
+    hp = hold_paws()
+
+    if mid in ht:
+        del ht[mid]
+
+    if mid in hp:
+        del hp[mid]
+
+    save_hold_tokens(ht)
+    save_hold_paws(hp)
+
+    await update.message.reply_text("Hold removed / Пауза снята")
+
+
 def main():
 
     app = ApplicationBuilder().token(TOKEN).build()
@@ -351,6 +443,7 @@ def main():
     app.add_handler(CommandHandler("holdT", holdT))
     app.add_handler(CommandHandler("holdP", holdP))
     app.add_handler(CommandHandler("holdlist", holdlist))
+    app.add_handler(CommandHandler("unhold", unhold))
     app.add_handler(CommandHandler("exportqueues", exportqueues))
     app.add_handler(CommandHandler("ID", idlist))
 
