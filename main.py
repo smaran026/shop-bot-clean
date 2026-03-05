@@ -378,6 +378,32 @@ async def holdlist(update:Update,context:ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(msg,parse_mode="Markdown")
 
 
+async def unhold(update:Update,context:ContextTypes.DEFAULT_TYPE):
+
+     mid=context.args[0]
+
+     ht=hold_tokens()
+     hp=hold_paws()
+
+     removed=False
+
+     if mid in ht:
+         del ht[mid]
+         removed=True
+
+     if mid in hp:
+         del hp[mid]
+         removed=True
+
+     save_hold_tokens(ht)
+     save_hold_paws(hp)
+
+     if removed:
+         await update.message.reply_text("Hold removed / Пауза снята")
+     else:
+         await update.message.reply_text("Player not on hold")
+
+
 async def exportqueues(update:Update,context:ContextTypes.DEFAULT_TYPE):
 
     tokens=tokens_queue()
@@ -425,7 +451,7 @@ def main():
     app.add_handler(CommandHandler("holdT",holdT))
     app.add_handler(CommandHandler("holdP",holdP))
     app.add_handler(CommandHandler("holdlist",holdlist))
-
+    app.add_handler(CommandHandler("unhold",unhold))
     app.add_handler(CommandHandler("exportqueues",exportqueues))
     app.add_handler(CommandHandler("ID",idlist))
 
